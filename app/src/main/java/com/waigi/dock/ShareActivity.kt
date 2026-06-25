@@ -124,10 +124,12 @@ private fun ShareDialogContent(
     var videoInfo by remember { mutableStateOf<VideoInfo?>(prefetchedVideoInfo) }
     var error by remember { mutableStateOf<String?>(null) }
 
-    var isAudio by remember { mutableStateOf(false) }
-    var selectedQuality by remember { mutableStateOf(0) }
-    var downloadSubtitles by remember { mutableStateOf(false) }
-    var selectedSubtitleLang by remember { mutableStateOf("") }
+    val defaultPrefs = remember { DownloadPreferences.createFromPreferences() }
+    var isAudio by remember { mutableStateOf(defaultPrefs.extractAudio) }
+    var selectedQuality by remember { mutableStateOf(defaultPrefs.videoQuality) }
+    var downloadSubtitles by remember { mutableStateOf(defaultPrefs.writeSubtitle || defaultPrefs.embedSubtitle) }
+    var selectedSubtitleLang by remember { mutableStateOf(defaultPrefs.subtitleLanguage) }
+    var embedThumbnail by remember { mutableStateOf(defaultPrefs.embedThumbnail) }
 
     // Fallback fetch path (only if no prefetched info)
     LaunchedEffect(sharedUrl) {
@@ -328,6 +330,35 @@ private fun ShareDialogContent(
                     }
                 }
 
+                Spacer(modifier = Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    text = "Additional Settings",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // "Embed thumbnail" checkbox (always visible)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { embedThumbnail = !embedThumbnail }
+                        .padding(vertical = 4.dp)
+                ) {
+                    Checkbox(
+                        checked = embedThumbnail,
+                        onCheckedChange = { embedThumbnail = it }
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "Embed thumbnail", style = MaterialTheme.typography.bodyMedium)
+                }
+
+                // Subtitle settings (only for Video format)
                 AnimatedVisibility(visible = !isAudio) {
                     val subtitleLanguages = remember(info) {
                         val map = mutableMapOf<String, String>()
@@ -342,69 +373,62 @@ private fun ShareDialogContent(
                         map.toList().sortedBy { it.second }
                     }
 
-                    if (subtitleLanguages.isNotEmpty()) {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(
-                                text = "Subtitles",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { downloadSubtitles = !downloadSubtitles }
+                                .padding(vertical = 4.dp)
+                        ) {
+                            Checkbox(
+                                checked = downloadSubtitles,
+                                onCheckedChange = { downloadSubtitles = it }
                             )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(text = "Download subtitles", style = MaterialTheme.typography.bodyMedium)
+                        }
+
+                        if (downloadSubtitles && subtitleLanguages.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(6.dp))
+                            var subtitleExpanded by remember { mutableStateOf(false) }
+                            val currentLangName =
+                                subtitleLanguages.firstOrNull { it.first == selectedSubtitleLang }?.second
+                                    ?: selectedSubtitleLang
 
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth()
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                                    .clickable { subtitleExpanded = true }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp)
                             ) {
-                                Checkbox(
-                                    checked = downloadSubtitles,
-                                    onCheckedChange = { downloadSubtitles = it }
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(text = "Download subtitles", style = MaterialTheme.typography.bodyMedium)
-                            }
-
-                            if (downloadSubtitles) {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                var subtitleExpanded by remember { mutableStateOf(false) }
-                                val currentLangName =
-                                    subtitleLanguages.firstOrNull { it.first == selectedSubtitleLang }?.second
-                                        ?: selectedSubtitleLang
-
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                        .clickable { subtitleExpanded = true }
-                                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = currentLangName.ifEmpty { "Select language" },
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                        Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null)
-                                    }
+                                    Text(
+                                        text = currentLangName.ifEmpty { "Select language" },
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = null)
+                                }
 
-                                    DropdownMenu(
-                                        expanded = subtitleExpanded,
-                                        onDismissRequest = { subtitleExpanded = false },
-                                        modifier = Modifier.fillMaxWidth(0.8f)
-                                    ) {
-                                        subtitleLanguages.forEach { (code, name) ->
-                                            DropdownMenuItem(
-                                                text = { Text(name) },
-                                                onClick = {
-                                                    selectedSubtitleLang = code
-                                                    subtitleExpanded = false
-                                                }
-                                            )
-                                        }
+                                DropdownMenu(
+                                    expanded = subtitleExpanded,
+                                    onDismissRequest = { subtitleExpanded = false },
+                                    modifier = Modifier.fillMaxWidth(0.8f)
+                                ) {
+                                    subtitleLanguages.forEach { (code, name) ->
+                                        DropdownMenuItem(
+                                            text = { Text(name) },
+                                            onClick = {
+                                                selectedSubtitleLang = code
+                                                subtitleExpanded = false
+                                            }
+                                        )
                                     }
                                 }
                             }
@@ -433,7 +457,8 @@ private fun ShareDialogContent(
                                 videoQuality = selectedQuality,
                                 writeSubtitle = downloadSubtitles,
                                 embedSubtitle = downloadSubtitles,
-                                subtitleLanguage = selectedSubtitleLang
+                                subtitleLanguage = selectedSubtitleLang,
+                                embedThumbnail = embedThumbnail
                             )
                             if (sharedUrl != null) {
                                 onStartDownload(sharedUrl, prefs)

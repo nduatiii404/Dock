@@ -128,11 +128,14 @@ object NotificationUtil {
     fun buildCompleteNotification(
         context: Context,
         title: String,
+        requestCode: Int = 0,
     ): Notification {
         val openAppIntent = PendingIntent.getActivity(
             context,
-            0,
-            Intent(context, MainActivity::class.java),
+            requestCode,
+            Intent(context, MainActivity::class.java).apply {
+                putExtra("navigate_to", "history")
+            },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         return NotificationCompat.Builder(context, CHANNEL_DOWNLOAD_COMPLETE)
@@ -149,11 +152,14 @@ object NotificationUtil {
         context: Context,
         title: String,
         error: String,
+        requestCode: Int = 0,
     ): Notification {
         val openAppIntent = PendingIntent.getActivity(
             context,
-            0,
-            Intent(context, MainActivity::class.java),
+            requestCode,
+            Intent(context, MainActivity::class.java).apply {
+                putExtra("navigate_to", "downloads")
+            },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         return NotificationCompat.Builder(context, CHANNEL_DOWNLOAD_COMPLETE)

@@ -60,6 +60,8 @@
             android:label="Dock Quick Download"
             android:launchMode="singleTop"
             android:theme="@style/Theme.Dock.Transparent"
+            android:taskAffinity=""
+            android:excludeFromRecents="true"
             android:windowSoftInputMode="adjustResize">
 
             <!-- Share sheet: receive URLs from other apps (TikTok, YouTube, etc.) -->

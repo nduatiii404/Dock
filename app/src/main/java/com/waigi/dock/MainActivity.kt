@@ -14,6 +14,9 @@ import com.waigi.dock.ui.DockNavHost
 
 class MainActivity : ComponentActivity() {
 
+    private val sharedUrlState = androidx.compose.runtime.mutableStateOf<String?>(null)
+    private val navigateToState = androidx.compose.runtime.mutableStateOf<String?>(null)
+
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* no-op — downloads still work; user just won't see notifications if denied */ }
@@ -31,12 +34,15 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Capture any URL shared into the app from another app (TikTok, YouTube, etc.)
-        val sharedUrl = intent?.getSharedUrl()
+        handleIntent(intent)
 
         setContent {
             // DockNavHost owns the DockTheme — no double-wrap here
-            DockNavHost(sharedUrl = sharedUrl)
+            DockNavHost(
+                sharedUrl = sharedUrlState.value,
+                navigateTo = navigateToState.value,
+                onNavigationHandled = { navigateToState.value = null }
+            )
         }
     }
 
@@ -44,6 +50,12 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         // Handle URLs shared while the app is already open
         setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        sharedUrlState.value = intent?.getSharedUrl()
+        navigateToState.value = intent?.getStringExtra("navigate_to")
     }
 }
 

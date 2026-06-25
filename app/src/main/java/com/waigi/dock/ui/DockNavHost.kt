@@ -114,10 +114,27 @@ private enum class OnboardingStep {
 
 /** Root composable — owns the nav controller, bottom bar, and screen routing. */
 @Composable
-fun DockNavHost(sharedUrl: String? = null) {
+fun DockNavHost(
+    sharedUrl: String? = null,
+    navigateTo: String? = null,
+    onNavigationHandled: () -> Unit = {}
+) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentDestination = navBackStackEntry?.destination
+
+    LaunchedEffect(navigateTo) {
+        if (navigateTo != null) {
+            navController.navigate(navigateTo) {
+                popUpTo(navController.graph.findStartDestination().id) {
+                    saveState = true
+                }
+                launchSingleTop = true
+                restoreState = true
+            }
+            onNavigationHandled()
+        }
+    }
 
     var onboardingStep by remember {
         mutableStateOf(

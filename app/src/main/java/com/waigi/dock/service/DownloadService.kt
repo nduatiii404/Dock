@@ -52,6 +52,7 @@ class DownloadService : Service() {
         const val EXTRA_WRITE_SUBTITLE = "extra_write_subtitle"
         const val EXTRA_EMBED_SUBTITLE = "extra_embed_subtitle"
         const val EXTRA_SUBTITLE_LANG = "extra_subtitle_lang"
+        const val EXTRA_EMBED_THUMBNAIL = "extra_embed_thumbnail"
 
         /** Convenience: start a download from anywhere in the app. */
         fun startDownload(
@@ -67,6 +68,7 @@ class DownloadService : Service() {
                 putExtra(EXTRA_WRITE_SUBTITLE, preferences.writeSubtitle)
                 putExtra(EXTRA_EMBED_SUBTITLE, preferences.embedSubtitle)
                 putExtra(EXTRA_SUBTITLE_LANG, preferences.subtitleLanguage)
+                putExtra(EXTRA_EMBED_THUMBNAIL, preferences.embedThumbnail)
             }
             context.startForegroundService(intent)
         }
@@ -96,6 +98,7 @@ class DownloadService : Service() {
     }
     private var hasStartedActiveTask = false
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
+    private val processedTasks = mutableSetOf<String>()
 
 
     override fun onCreate() {
@@ -125,13 +128,15 @@ class DownloadService : Service() {
                 val writeSubtitle = intent.getBooleanExtra(EXTRA_WRITE_SUBTITLE, false)
                 val embedSubtitle = intent.getBooleanExtra(EXTRA_EMBED_SUBTITLE, false)
                 val subtitleLang = intent.getStringExtra(EXTRA_SUBTITLE_LANG) ?: "en"
+                val embedThumbnail = intent.getBooleanExtra(EXTRA_EMBED_THUMBNAIL, true)
 
                 val prefs = DownloadPreferences.createFromPreferences().copy(
                     extractAudio = isAudio,
                     videoQuality = videoQuality,
                     writeSubtitle = writeSubtitle,
                     embedSubtitle = embedSubtitle,
-                    subtitleLanguage = subtitleLang
+                    subtitleLanguage = subtitleLang,
+                    embedThumbnail = embedThumbnail
                 )
                 Log.d(TAG, "Starting download: $url")
                 Downloader.enqueue(url, prefs)
@@ -176,8 +181,7 @@ class DownloadService : Service() {
                         action = com.waigi.dock.ShareActivity.ACTION_SHOW_DOWNLOAD_SHEET
                         addFlags(
                             Intent.FLAG_ACTIVITY_NEW_TASK or
-                            Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP
                         )
                     }
                     this@DownloadService.startActivity(sheetIntent)
@@ -258,30 +262,46 @@ class DownloadService : Service() {
 
         // Post one-shot complete/error notifications for newly finished tasks
         taskMap.values.forEach { task ->
-            when (val state = task.state) {
-                is TaskState.Completed -> {
-                    notificationManager.cancel(task.notificationId)
-                    if (notificationsEnabled) {
-                        val notif = NotificationUtil.buildCompleteNotification(this, task.title)
-                        notificationManager.notify(task.notificationId + 100_000, notif)
+            if (task.state.isTerminal) {
+                if (task.id !in processedTasks) {
+                    processedTasks.add(task.id)
+
+                    when (val state = task.state) {
+                        is TaskState.Completed -> {
+                            notificationManager.cancel(task.notificationId)
+                            if (notificationsEnabled) {
+                                val notif = NotificationUtil.buildCompleteNotification(
+                                    context = this,
+                                    title = task.title,
+                                    requestCode = task.notificationId + 100_000
+                                )
+                                notificationManager.notify(task.notificationId + 100_000, notif)
+                            }
+                            serviceScope.launch(Dispatchers.Main) {
+                                Toast.makeText(
+                                    this@DownloadService,
+                                    "Download complete: ${task.title}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                        is TaskState.Error -> {
+                            notificationManager.cancel(task.notificationId)
+                            if (notificationsEnabled) {
+                                val notif = NotificationUtil.buildErrorNotification(
+                                    context = this,
+                                    title = task.title,
+                                    error = state.message,
+                                    requestCode = task.notificationId + 200_000
+                                )
+                                notificationManager.notify(task.notificationId + 200_000, notif)
+                            }
+                        }
+                        else -> Unit
                     }
                 }
-                is TaskState.Error -> {
-                    notificationManager.cancel(task.notificationId)
-                    if (notificationsEnabled) {
-                        val notif = NotificationUtil.buildErrorNotification(
-                            this, task.title, state.message
-                        )
-                        notificationManager.notify(task.notificationId + 200_000, notif)
-                    }
-                }
-                is TaskState.Cancelled -> {
-                    notificationManager.cancel(task.notificationId)
-                }
-                is TaskState.Paused -> {
-                    notificationManager.cancel(task.notificationId)
-                }
-                else -> Unit
+            } else {
+                processedTasks.remove(task.id)
             }
         }
 
