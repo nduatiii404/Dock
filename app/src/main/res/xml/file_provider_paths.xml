@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Dock download directories under public Downloads/Dock/ -->
+    <external-path name="dock_downloads" path="Download/Dock/" />
+    <!-- Temp directory for intermediate files -->
+    <external-path name="dock_temp" path="Download/Dock/.tmp/" />
+</paths>
