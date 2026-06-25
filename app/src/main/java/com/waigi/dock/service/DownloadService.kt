@@ -171,10 +171,17 @@ class DownloadService : Service() {
                     // Serialize VideoInfo to JSON and cache in MMKV
                     val jsonStr = json.encodeToString(info)
                     PreferenceUtil.storePendingVideoInfo(url, jsonStr)
-                    // Post tappable "ready" notification
-                    val readyNotif = NotificationUtil.buildFetchReadyNotification(this@DownloadService, info.title)
-                    notificationManager.notify(NotificationUtil.FETCH_READY_NOTIFICATION_ID, readyNotif)
-                    Log.d(TAG, "Fetch info succeeded: ${info.title}")
+                    // Launch ShareActivity directly so the download sheet auto-appears
+                    val sheetIntent = Intent(this@DownloadService, com.waigi.dock.ShareActivity::class.java).apply {
+                        action = com.waigi.dock.ShareActivity.ACTION_SHOW_DOWNLOAD_SHEET
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                            Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                            Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                        )
+                    }
+                    this@DownloadService.startActivity(sheetIntent)
+                    Log.d(TAG, "Fetch info succeeded, launching sheet: ${info.title}")
                 },
                 onFailure = { err ->
                     val msg = err.message?.lines()

@@ -58,6 +58,7 @@
             android:name=".ShareActivity"
             android:exported="true"
             android:label="Dock Quick Download"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Dock.Transparent"
             android:windowSoftInputMode="adjustResize">
 

@@ -41,16 +41,26 @@ import kotlinx.serialization.json.Json
 class ShareActivity : ComponentActivity() {
 
     companion object {
-        /** Action sent by the "ready to download" notification. */
+        /** Action used by DownloadService to auto-show the download sheet. */
         const val ACTION_SHOW_DOWNLOAD_SHEET = "com.waigi.dock.SHOW_DOWNLOAD_SHEET"
         private val json = Json { ignoreUnknownKeys = true }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleIntent(intent)
+    }
 
+    /** Called when singleTop activity receives a new intent while already running. */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: android.content.Intent?) {
         when {
-            // Case 1: Notification tapped — show download sheet with pre-fetched data
+            // Case 1: Service auto-launched (or old notification tapped) — show download sheet
             intent?.action == ACTION_SHOW_DOWNLOAD_SHEET -> {
                 val pending = PreferenceUtil.retrievePendingVideoInfo()
                 if (pending == null) {
