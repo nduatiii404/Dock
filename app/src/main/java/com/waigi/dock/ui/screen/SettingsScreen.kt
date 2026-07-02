@@ -675,13 +675,13 @@ fun SettingsScreen() {
                             label = "Video Download Folder (Absolute Path)",
                             value = videoDownloadDirPreference,
                             onValueChange = { videoDownloadDirPreference = it; VIDEO_DIRECTORY.updateString(it) },
-                            placeholder = "e.g. /storage/emulated/0/Download/Dock/Video"
+                            placeholder = FileUtil.defaultVideoDir.absolutePath
                         )
                         InputFieldRow(
                             label = "Audio Download Folder (Absolute Path)",
                             value = audioDownloadDirPreference,
                             onValueChange = { audioDownloadDirPreference = it; AUDIO_DIRECTORY.updateString(it) },
-                            placeholder = "e.g. /storage/emulated/0/Download/Dock/Audio"
+                            placeholder = FileUtil.defaultAudioDir.absolutePath
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         SettingsSectionHeader("Storage & Cleanup")

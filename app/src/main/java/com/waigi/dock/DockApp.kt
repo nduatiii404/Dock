@@ -3,6 +3,7 @@ package com.waigi.dock
 import android.app.Application
 import com.tencent.mmkv.MMKV
 import com.waigi.dock.di.appModule
+import com.waigi.dock.util.FileUtil
 import com.waigi.dock.util.NotificationUtil
 import com.waigi.dock.util.YoutubeDLUpdater
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +44,12 @@ class DockApp : Application() {
             applicationScope.launch(Dispatchers.IO) {
                 YoutubeDLUpdater.updateYtDlp(this@DockApp)
             }
+        }
+
+        // 6. Eagerly create the dedicated Dock folder structure so it appears
+        //    in the file manager even before the first download.
+        applicationScope.launch(Dispatchers.IO) {
+            FileUtil.ensureDockFoldersExist()
         }
     }
 

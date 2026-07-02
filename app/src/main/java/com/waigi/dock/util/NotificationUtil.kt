@@ -99,6 +99,16 @@ object NotificationUtil {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
+        val deleteIntent = PendingIntent.getService(
+            context,
+            taskId.hashCode() + 1,
+            Intent(context, DownloadService::class.java).apply {
+                action = DownloadService.ACTION_REPOST_NOTIFICATION
+                putExtra(DownloadService.EXTRA_TASK_ID, taskId)
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
         val progressInt = progress.toInt().coerceIn(0, 100)
         val etaText = if (etaSeconds > 0) formatEta(etaSeconds) else ""
         
@@ -115,6 +125,7 @@ object NotificationUtil {
             .setContentText(subText.ifEmpty { "Starting…" })
             .setProgress(100, progressInt, progressInt == 0)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelIntent)
+            .setDeleteIntent(deleteIntent)
             .setOngoing(true)
             .setSilent(true)
             .setOnlyAlertOnce(true)

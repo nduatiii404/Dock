@@ -416,6 +416,8 @@ object DownloadUtil {
                 // ── Common stability options ──────────────────────────────
                 addOption("--no-mtime")
                 addOption("--print", "after_move:filepath")
+                addOption("--progress")
+                addOption("--newline")
                 addOption("--no-warnings")
 
                 // ── Custom Arguments ──────────────────────────────────────

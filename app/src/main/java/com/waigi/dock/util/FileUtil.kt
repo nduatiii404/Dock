@@ -56,6 +56,17 @@ object FileUtil {
     fun sanitizeFilename(name: String): String =
         name.replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
 
+    /**
+     * Eagerly creates all Dock-owned folders under public storage so they are
+     * visible in the file manager even before the first download runs.
+     * Safe to call multiple times — mkdirs() is a no-op if the dir exists.
+     */
+    fun ensureDockFoldersExist() {
+        defaultVideoDir.mkdirs()
+        defaultAudioDir.mkdirs()
+        getTempDir().mkdirs()
+    }
+
     fun getFolderSize(path: String): Long {
         val file = File(path)
         if (!file.exists()) return 0L

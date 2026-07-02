@@ -43,6 +43,7 @@ class DownloadService : Service() {
         const val ACTION_DOWNLOAD = "com.waigi.dock.DOWNLOAD"
         const val ACTION_CANCEL   = "com.waigi.dock.CANCEL"
         const val ACTION_STOP     = "com.waigi.dock.STOP"
+        const val ACTION_REPOST_NOTIFICATION = "com.waigi.dock.REPOST_NOTIFICATION"
 
         const val EXTRA_URL       = "extra_url"
         const val EXTRA_TASK_ID   = "extra_task_id"
@@ -90,6 +91,7 @@ class DownloadService : Service() {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val processedTasks = mutableSetOf<String>()
     private val startedToastsShown = mutableSetOf<String>()
+    private var isFirstEmission = true
 
 
     override fun onCreate() {
@@ -137,6 +139,10 @@ class DownloadService : Service() {
                 Log.d(TAG, "Cancelling task: $taskId")
                 Downloader.cancel(taskId)
             }
+            ACTION_REPOST_NOTIFICATION -> {
+                val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return START_NOT_STICKY
+                repostProgressNotification(taskId)
+            }
             ACTION_STOP -> {
                 Log.d(TAG, "Stop all requested")
                 stopSelf()
@@ -157,6 +163,22 @@ class DownloadService : Service() {
     // ── Notification management ───────────────────────────────────────────────
 
     private fun onTasksUpdated(taskMap: Map<String, com.waigi.dock.download.DownloadTask>) {
+        if (isFirstEmission) {
+            isFirstEmission = false
+            taskMap.forEach { (id, task) ->
+                if (task.state.isTerminal) {
+                    processedTasks.add(id)
+                }
+                if (task.state is TaskState.Downloading) {
+                    startedToastsShown.add(id)
+                }
+            }
+        }
+
+        // Clean up any untracked task IDs to keep memory clean
+        processedTasks.retainAll(taskMap.keys)
+        startedToastsShown.retainAll(taskMap.keys)
+
         val activeTasks = taskMap.values.filter { it.state.isBusy }
         val activeCount = activeTasks.size
 
@@ -274,6 +296,37 @@ class DownloadService : Service() {
         if (hasStartedActiveTask && activeCount == 0 && taskMap.values.all { it.state.isTerminal }) {
             Log.d(TAG, "No active tasks — stopping service")
             stopSelf()
+        }
+    }
+
+    private fun repostProgressNotification(taskId: String) {
+        val task = Downloader.tasks.value[taskId] ?: return
+        val state = task.state
+        if (state is TaskState.Downloading || state is TaskState.FetchingInfo) {
+            val notificationsEnabled = com.waigi.dock.util.PreferenceUtil.notificationsEnabled
+            if (notificationsEnabled) {
+                val notif = if (state is TaskState.Downloading) {
+                    NotificationUtil.buildProgressNotification(
+                        context = this,
+                        taskId = task.id,
+                        title = task.title,
+                        progress = state.progress,
+                        speedText = state.speedText,
+                        etaSeconds = state.etaSeconds,
+                        totalSize = task.totalSize,
+                    )
+                } else {
+                    NotificationUtil.buildProgressNotification(
+                        context = this,
+                        taskId = task.id,
+                        title = task.title.ifEmpty { task.url },
+                        progress = 0f,
+                        speedText = "Fetching info…",
+                        etaSeconds = -1,
+                    )
+                }
+                notificationManager.notify(task.notificationId, notif)
+            }
         }
     }
 }

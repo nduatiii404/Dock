@@ -1,54 +1,48 @@
 package com.waigi.dock.ui
 
-import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.boundsInRoot
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.geometry.CornerRadius
-import com.waigi.dock.util.PreferenceUtil
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -57,47 +51,43 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.PathMeasure
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.drawscope.clipPath
-import androidx.compose.ui.graphics.drawscope.clipRect
-import androidx.compose.ui.graphics.drawscope.withTransform
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.waigi.dock.download.Downloader
+import com.waigi.dock.download.TaskState
 import com.waigi.dock.ui.navigation.Screen
 import com.waigi.dock.ui.navigation.bottomNavTabs
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import com.waigi.dock.ui.screen.DownloadsScreen
 import com.waigi.dock.ui.screen.HistoryScreen
 import com.waigi.dock.ui.screen.HomeScreen
 import com.waigi.dock.ui.screen.SettingsScreen
 import com.waigi.dock.ui.theme.DockTheme
-import com.waigi.dock.download.Downloader
-import com.waigi.dock.download.TaskState
-import androidx.compose.runtime.collectAsState
+import com.waigi.dock.util.PreferenceUtil
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -112,25 +102,77 @@ private enum class OnboardingStep {
     COMPLETED
 }
 
-/** Root composable — owns the nav controller, bottom bar, and screen routing. */
+/** Root composable — owns the pager state, nav controller (for detail screens), bottom bar, and screen routing. */
 @Composable
 fun DockNavHost(
     sharedUrl: String? = null,
     navigateTo: String? = null,
     onNavigationHandled: () -> Unit = {}
 ) {
+    // NavController is kept solely for non-bottom-tab detail screens (e.g. FormatPicker)
     val navController = rememberNavController()
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentDestination = navBackStackEntry?.destination
+    val coroutineScope = rememberCoroutineScope()
 
+    // Map route name -> pager page index
+    fun routeToPage(route: String?): Int = when (route) {
+        Screen.Home.route      -> 0
+        Screen.Downloads.route -> 1
+        Screen.History.route   -> 2
+        Screen.Settings.route  -> 3
+        else                   -> -1
+    }
+
+    val pagerState = rememberPagerState(initialPage = 0) { bottomNavTabs.size }
+
+    val fadeAlpha = remember { Animatable(1f) }
+    val incomingScale = remember { Animatable(1f) }
+
+    // Called exclusively from bottom-bar tab taps (not swipe)
+    fun navigateByClick(targetPage: Int) {
+        if (targetPage == pagerState.currentPage) return
+        coroutineScope.launch {
+            // 1. Fade out the current page quickly (90ms)
+            fadeAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(durationMillis = 90, easing = LinearEasing)
+            )
+            
+            // 2. Snap incoming scale to 96% and switch the page instantly while fully transparent
+            incomingScale.snapTo(0.96f)
+            pagerState.scrollToPage(targetPage)
+            
+            // 3. Wait for the new page to recompose and render its first frame while transparent (60ms)
+            delay(60)
+            
+            // 4. Fade in and scale up the new page concurrently (210ms)
+            launch {
+                fadeAlpha.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(durationMillis = 210, easing = LinearOutSlowInEasing)
+                )
+            }
+            launch {
+                incomingScale.animateTo(
+                    targetValue = 1f,
+                    animationSpec = tween(durationMillis = 210, easing = LinearOutSlowInEasing)
+                )
+            }
+        }
+    }
+
+    // When `navigateTo` targets a bottom-tab route, use the click-fade path
     LaunchedEffect(navigateTo) {
         if (navigateTo != null) {
-            navController.navigate(navigateTo) {
-                popUpTo(navController.graph.findStartDestination().id) {
-                    saveState = true
+            val page = routeToPage(navigateTo)
+            if (page >= 0) {
+                navigateByClick(page)
+            } else {
+                // Non-tab destination (e.g. format_picker) — use navController
+                navController.navigate(navigateTo) {
+                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                    launchSingleTop = true
+                    restoreState = true
                 }
-                launchSingleTop = true
-                restoreState = true
             }
             onNavigationHandled()
         }
@@ -147,9 +189,18 @@ fun DockNavHost(
     var historyRect by remember { mutableStateOf<Rect?>(null) }
     var settingsRect by remember { mutableStateOf<Rect?>(null) }
 
-    // Decide whether to show the bottom bar (hide on detail screens)
-    val showBottomBar = bottomNavTabs.any { tab ->
-        currentDestination?.hierarchy?.any { it.route == tab.route } == true
+    // Helper: render the screen for a given page index
+    @Composable
+    fun PageContent(page: Int) {
+        when (page) {
+            0 -> HomeScreen(
+                sharedUrl = sharedUrl,
+                onClipboardPositioned = { rect -> clipboardRect = rect }
+            )
+            1 -> DownloadsScreen()
+            2 -> HistoryScreen()
+            3 -> SettingsScreen()
+        }
     }
 
     DockTheme {
@@ -160,109 +211,41 @@ fun DockNavHost(
             ) {
                 Scaffold(
                     bottomBar = {
-                        if (showBottomBar) {
-                            DockBottomBar(
-                                currentDestination = currentDestination,
-                                onTabSelected = { tab ->
-                                    navController.navigate(tab.route) {
-                                        // Pop back to start so back stack doesn't grow infinitely
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                },
-                                onTabPositioned = { tab, rect ->
-                                    when (tab) {
-                                        Screen.Downloads -> downloadsRect = rect
-                                        Screen.History -> historyRect = rect
-                                        Screen.Settings -> settingsRect = rect
-                                        else -> {}
-                                    }
+                        DockBottomBar(
+                            selectedPage = pagerState.currentPage,
+                            onTabSelected = { page -> navigateByClick(page) },
+                            onTabPositioned = { tab, rect ->
+                                when (tab) {
+                                    Screen.Downloads -> downloadsRect = rect
+                                    Screen.History   -> historyRect = rect
+                                    Screen.Settings  -> settingsRect = rect
+                                    else             -> {}
                                 }
-                            )
-                        }
+                            }
+                        )
                     },
                     contentWindowInsets = WindowInsets.navigationBars,
                 ) { innerPadding ->
-                    val getTabIndex: (String?) -> Int = { route ->
-                        when (route) {
-                            Screen.Home.route -> 0
-                            Screen.Downloads.route -> 1
-                            Screen.History.route -> 2
-                            Screen.Settings.route -> 3
-                            else -> 0
-                        }
-                    }
-
-                    NavHost(
-                        navController = navController,
-                        startDestination = Screen.Home.route,
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(innerPadding),
-                        enterTransition = {
-                            val initialIndex = getTabIndex(initialState.destination.route)
-                            val targetIndex = getTabIndex(targetState.destination.route)
-                            val direction = if (targetIndex >= initialIndex) {
-                                AnimatedContentTransitionScope.SlideDirection.Start
-                            } else {
-                                AnimatedContentTransitionScope.SlideDirection.End
-                            }
-                            slideIntoContainer(direction, tween(NAV_ANIM_DURATION)) +
-                                fadeIn(tween(NAV_ANIM_DURATION))
-                        },
-                        exitTransition = {
-                            val initialIndex = getTabIndex(initialState.destination.route)
-                            val targetIndex = getTabIndex(targetState.destination.route)
-                            val direction = if (targetIndex >= initialIndex) {
-                                AnimatedContentTransitionScope.SlideDirection.Start
-                            } else {
-                                AnimatedContentTransitionScope.SlideDirection.End
-                            }
-                            slideOutOfContainer(direction, tween(NAV_ANIM_DURATION)) +
-                                fadeOut(tween(NAV_ANIM_DURATION))
-                        },
-                        popEnterTransition = {
-                            val initialIndex = getTabIndex(initialState.destination.route)
-                            val targetIndex = getTabIndex(targetState.destination.route)
-                            val direction = if (targetIndex >= initialIndex) {
-                                AnimatedContentTransitionScope.SlideDirection.Start
-                            } else {
-                                AnimatedContentTransitionScope.SlideDirection.End
-                            }
-                            slideIntoContainer(direction, tween(NAV_ANIM_DURATION)) +
-                                fadeIn(tween(NAV_ANIM_DURATION))
-                        },
-                        popExitTransition = {
-                            val initialIndex = getTabIndex(initialState.destination.route)
-                            val targetIndex = getTabIndex(targetState.destination.route)
-                            val direction = if (targetIndex >= initialIndex) {
-                                AnimatedContentTransitionScope.SlideDirection.Start
-                            } else {
-                                AnimatedContentTransitionScope.SlideDirection.End
-                            }
-                            slideOutOfContainer(direction, tween(NAV_ANIM_DURATION)) +
-                                fadeOut(tween(NAV_ANIM_DURATION))
-                        },
+                            .padding(innerPadding)
                     ) {
-                        composable(Screen.Home.route) {
-                            HomeScreen(
-                                sharedUrl = sharedUrl,
-                                onClipboardPositioned = { rect ->
-                                    clipboardRect = rect
-                                }
-                            )
-                        }
-                        composable(Screen.Downloads.route) {
-                            DownloadsScreen()
-                        }
-                        composable(Screen.History.route) {
-                            HistoryScreen()
-                        }
-                        composable(Screen.Settings.route) {
-                            SettingsScreen()
+                        // ── HorizontalPager (handles swipe gestures & animated click transitions) ──
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    alpha = fadeAlpha.value
+                                    scaleX = incomingScale.value
+                                    scaleY = incomingScale.value
+                                },
+                            beyondViewportPageCount = 1,
+                            userScrollEnabled = true,
+                            key = { it },
+                        ) { page ->
+                            PageContent(page)
                         }
                     }
                 }
@@ -277,15 +260,15 @@ fun DockNavHost(
                     settingsRect = settingsRect,
                     onNext = {
                         onboardingStep = when (onboardingStep) {
-                            OnboardingStep.WELCOME -> OnboardingStep.CLIPBOARD
-                            OnboardingStep.CLIPBOARD -> OnboardingStep.DOWNLOADS
-                            OnboardingStep.DOWNLOADS -> OnboardingStep.HISTORY
-                            OnboardingStep.HISTORY -> OnboardingStep.SETTINGS
-                            OnboardingStep.SETTINGS -> {
+                            OnboardingStep.WELCOME    -> OnboardingStep.CLIPBOARD
+                            OnboardingStep.CLIPBOARD  -> OnboardingStep.DOWNLOADS
+                            OnboardingStep.DOWNLOADS  -> OnboardingStep.HISTORY
+                            OnboardingStep.HISTORY    -> OnboardingStep.SETTINGS
+                            OnboardingStep.SETTINGS   -> {
                                 PreferenceUtil.updateOnboardingCompleted(true)
                                 OnboardingStep.COMPLETED
                             }
-                            OnboardingStep.COMPLETED -> OnboardingStep.COMPLETED
+                            OnboardingStep.COMPLETED  -> OnboardingStep.COMPLETED
                         }
                     },
                     onSkip = {
@@ -569,8 +552,8 @@ private fun WelcomeScreenOverlay(
 
 @Composable
 private fun DockBottomBar(
-    currentDestination: androidx.navigation.NavDestination?,
-    onTabSelected: (Screen) -> Unit,
+    selectedPage: Int,
+    onTabSelected: (Int) -> Unit,
     onTabPositioned: (Screen, Rect) -> Unit = { _, _ -> },
 ) {
     // Observe active downloads for the animated icon
@@ -597,14 +580,13 @@ private fun DockBottomBar(
         tonalElevation = 0.dp,
         windowInsets = WindowInsets.navigationBars,
     ) {
-        bottomNavTabs.forEach { tab ->
-            val isSelected = currentDestination?.hierarchy
-                ?.any { it.route == tab.route } == true
+        bottomNavTabs.forEachIndexed { index, tab ->
+            val isSelected = index == selectedPage
             val isDownloadsTab = tab == Screen.Downloads
 
             NavigationBarItem(
                 selected = isSelected,
-                onClick = { onTabSelected(tab) },
+                onClick = { onTabSelected(index) },
                 modifier = Modifier.onGloballyPositioned {
                     onTabPositioned(tab, it.boundsInRoot())
                 },
