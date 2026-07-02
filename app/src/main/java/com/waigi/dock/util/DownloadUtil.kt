@@ -502,6 +502,7 @@ object DownloadUtil {
             4 to 360
         )
         heightMap[quality]?.let { h ->
+            addOption("-f", "bestvideo[height<=?$h]+bestaudio/best")
             if (h > 1080) {
                 // High resolutions (2K/4K) require VP9 or AV1 codecs on YouTube.
                 // Do not force codec:h264 for resolutions above 1080p.

@@ -25,9 +25,6 @@ object NotificationUtil {
     const val CHANNEL_DOWNLOAD_COMPLETE = "dock_download_complete"
 
     const val FOREGROUND_NOTIFICATION_ID = 1
-    const val FETCH_INFO_NOTIFICATION_ID  = 3
-    const val FETCH_READY_NOTIFICATION_ID = 4
-    const val FETCH_ERROR_NOTIFICATION_ID = 5
 
     /** Create all notification channels (required on Android 8+). */
     fun createChannels(context: Context) {
@@ -167,62 +164,6 @@ object NotificationUtil {
             .setContentTitle("Download failed")
             .setContentText(title.ifEmpty { error })
             .setStyle(NotificationCompat.BigTextStyle().bigText(error))
-            .setContentIntent(openAppIntent)
-            .setAutoCancel(true)
-            .build()
-    }
-
-    /** Build an indeterminate notification shown while fetching video info in the background. */
-    fun buildFetchingInfoNotification(context: Context, url: String): Notification {
-        val openAppIntent = PendingIntent.getActivity(
-            context, 0,
-            Intent(context, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        return NotificationCompat.Builder(context, CHANNEL_DOWNLOAD_PROGRESS)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Fetching video details…")
-            .setContentText(url.take(80))
-            .setProgress(0, 0, true)
-            .setOngoing(true)
-            .setSilent(true)
-            .setContentIntent(openAppIntent)
-            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .build()
-    }
-
-    /** Build a high-priority notification tapped to open the download sheet. */
-    fun buildFetchReadyNotification(context: Context, title: String): Notification {
-        val openSheetIntent = PendingIntent.getActivity(
-            context,
-            FETCH_READY_NOTIFICATION_ID,
-            Intent(context, com.waigi.dock.ShareActivity::class.java).apply {
-                action = com.waigi.dock.ShareActivity.ACTION_SHOW_DOWNLOAD_SHEET
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            },
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        return NotificationCompat.Builder(context, CHANNEL_DOWNLOAD_COMPLETE)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Tap to download")
-            .setContentText(title)
-            .setContentIntent(openSheetIntent)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-    }
-
-    /** Build a notification shown when background video info fetch fails. */
-    fun buildFetchErrorNotification(context: Context, error: String): Notification {
-        val openAppIntent = PendingIntent.getActivity(
-            context, 0,
-            Intent(context, MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-        )
-        return NotificationCompat.Builder(context, CHANNEL_DOWNLOAD_COMPLETE)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Failed to fetch video info")
-            .setContentText(error.take(120))
             .setContentIntent(openAppIntent)
             .setAutoCancel(true)
             .build()

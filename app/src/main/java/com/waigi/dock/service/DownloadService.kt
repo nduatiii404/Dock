@@ -43,7 +43,6 @@ class DownloadService : Service() {
         const val ACTION_DOWNLOAD = "com.waigi.dock.DOWNLOAD"
         const val ACTION_CANCEL   = "com.waigi.dock.CANCEL"
         const val ACTION_STOP     = "com.waigi.dock.STOP"
-        const val ACTION_FETCH_INFO = "com.waigi.dock.FETCH_INFO"
 
         const val EXTRA_URL       = "extra_url"
         const val EXTRA_TASK_ID   = "extra_task_id"
@@ -81,15 +80,6 @@ class DownloadService : Service() {
             }
             context.startService(intent)
         }
-
-        /** Start a background fetch of video info (share-sheet flow). */
-        fun startFetchInfo(context: Context, url: String) {
-            val intent = Intent(context, DownloadService::class.java).apply {
-                action = ACTION_FETCH_INFO
-                putExtra(EXTRA_URL, url)
-            }
-            context.startForegroundService(intent)
-        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -99,6 +89,7 @@ class DownloadService : Service() {
     private var hasStartedActiveTask = false
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val processedTasks = mutableSetOf<String>()
+    private val startedToastsShown = mutableSetOf<String>()
 
 
     override fun onCreate() {
@@ -150,61 +141,11 @@ class DownloadService : Service() {
                 Log.d(TAG, "Stop all requested")
                 stopSelf()
             }
-            ACTION_FETCH_INFO -> {
-                val url = intent.getStringExtra(EXTRA_URL) ?: return START_NOT_STICKY
-                Log.d(TAG, "Fetching info for: $url")
-                handleFetchInfo(url)
-            }
         }
         return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun handleFetchInfo(url: String) {
-        // Show indeterminate fetching notification
-        val fetchingNotif = NotificationUtil.buildFetchingInfoNotification(this, url)
-        notificationManager.notify(NotificationUtil.FETCH_INFO_NOTIFICATION_ID, fetchingNotif)
-
-        serviceScope.launch {
-            val result = DownloadUtil.fetchVideoInfo(url)
-            // Always cancel the fetching notification when done
-            notificationManager.cancel(NotificationUtil.FETCH_INFO_NOTIFICATION_ID)
-
-            result.fold(
-                onSuccess = { info ->
-                    // Serialize VideoInfo to JSON and cache in MMKV
-                    val jsonStr = json.encodeToString(info)
-                    PreferenceUtil.storePendingVideoInfo(url, jsonStr)
-                    // Launch ShareActivity directly so the download sheet auto-appears
-                    val sheetIntent = Intent(this@DownloadService, com.waigi.dock.ShareActivity::class.java).apply {
-                        action = com.waigi.dock.ShareActivity.ACTION_SHOW_DOWNLOAD_SHEET
-                        addFlags(
-                            Intent.FLAG_ACTIVITY_NEW_TASK or
-                            Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        )
-                    }
-                    this@DownloadService.startActivity(sheetIntent)
-                    Log.d(TAG, "Fetch info succeeded, launching sheet: ${info.title}")
-                },
-                onFailure = { err ->
-                    val msg = err.message?.lines()
-                        ?.filter { !it.contains("WARNING:", ignoreCase = true) }
-                        ?.joinToString(" ")
-                        ?.trim()
-                        ?.take(120)
-                        ?: "Failed to fetch video info"
-                    val errorNotif = NotificationUtil.buildFetchErrorNotification(this@DownloadService, msg)
-                    notificationManager.notify(NotificationUtil.FETCH_ERROR_NOTIFICATION_ID, errorNotif)
-                    Log.e(TAG, "Fetch info failed: $msg")
-                    launch(Dispatchers.Main) {
-                        Toast.makeText(this@DownloadService, msg, Toast.LENGTH_LONG).show()
-                    }
-                }
-            )
-        }
-    }
-
 
     override fun onDestroy() {
         serviceScope.cancel()
@@ -262,11 +203,25 @@ class DownloadService : Service() {
 
         // Post one-shot complete/error notifications for newly finished tasks
         taskMap.values.forEach { task ->
-            if (task.state.isTerminal) {
+            val state = task.state
+            if (state is TaskState.Downloading) {
+                if (task.id !in startedToastsShown) {
+                    startedToastsShown.add(task.id)
+                    serviceScope.launch(Dispatchers.Main) {
+                        Toast.makeText(
+                            this@DownloadService,
+                            "Download started in background…",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            }
+
+            if (state.isTerminal) {
                 if (task.id !in processedTasks) {
                     processedTasks.add(task.id)
 
-                    when (val state = task.state) {
+                    when (state) {
                         is TaskState.Completed -> {
                             notificationManager.cancel(task.notificationId)
                             if (notificationsEnabled) {
@@ -290,11 +245,18 @@ class DownloadService : Service() {
                             if (notificationsEnabled) {
                                 val notif = NotificationUtil.buildErrorNotification(
                                     context = this,
-                                    title = task.title,
+                                    title = task.title.ifEmpty { task.url },
                                     error = state.message,
                                     requestCode = task.notificationId + 200_000
                                 )
                                 notificationManager.notify(task.notificationId + 200_000, notif)
+                            }
+                            serviceScope.launch(Dispatchers.Main) {
+                                Toast.makeText(
+                                    this@DownloadService,
+                                    state.message,
+                                    Toast.LENGTH_LONG
+                                ).show()
                             }
                         }
                         else -> Unit
@@ -302,6 +264,9 @@ class DownloadService : Service() {
                 }
             } else {
                 processedTasks.remove(task.id)
+                if (state == TaskState.Queued) {
+                    startedToastsShown.remove(task.id)
+                }
             }
         }
 
