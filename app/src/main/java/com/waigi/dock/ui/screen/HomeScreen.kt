@@ -544,13 +544,13 @@ private fun DockHeader(showGradient: Boolean, isCompact: Boolean = false) {
                         )
                         Text(
                             text = "Dock",
-                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                             color = Color.White,
                             maxLines = 1,
                         )
                         Text(
                             text = "·  Stash your streams, zero strings attached",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodyMedium,
                             color = Color.White.copy(alpha = 0.8f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
