@@ -88,12 +88,36 @@ object NotificationUtil {
         speedText: String,
         etaSeconds: Long,
         totalSize: String = "",
+        currentPart: Int = 0,
+        totalParts: Int = 0,
+        isMerging: Boolean = false,
+        isPaused: Boolean = false,
     ): Notification {
         val cancelIntent = PendingIntent.getService(
             context,
             taskId.hashCode(),
             Intent(context, DownloadService::class.java).apply {
                 action = DownloadService.ACTION_CANCEL
+                putExtra(DownloadService.EXTRA_TASK_ID, taskId)
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val pauseIntent = PendingIntent.getService(
+            context,
+            taskId.hashCode() + 2,
+            Intent(context, DownloadService::class.java).apply {
+                action = DownloadService.ACTION_PAUSE
+                putExtra(DownloadService.EXTRA_TASK_ID, taskId)
+            },
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
+        val resumeIntent = PendingIntent.getService(
+            context,
+            taskId.hashCode() + 3,
+            Intent(context, DownloadService::class.java).apply {
+                action = DownloadService.ACTION_RESUME
                 putExtra(DownloadService.EXTRA_TASK_ID, taskId)
             },
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
@@ -109,27 +133,54 @@ object NotificationUtil {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
+        if (isMerging) {
+            val partPrefix = if (totalParts > 1) "Part $totalParts/$totalParts · " else ""
+            return NotificationCompat.Builder(context, CHANNEL_DOWNLOAD_PROGRESS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(title.ifEmpty { "Downloading…" })
+                .setContentText("${partPrefix}Merging parts into final file…")
+                .setProgress(100, 0, true)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelIntent)
+                .setDeleteIntent(deleteIntent)
+                .setOngoing(true)
+                .setSilent(true)
+                .setOnlyAlertOnce(true)
+                .build()
+        }
+
         val progressInt = progress.toInt().coerceIn(0, 100)
         val etaText = if (etaSeconds > 0) formatEta(etaSeconds) else ""
+        val partText = if (totalParts > 1 && currentPart > 0) "Part $currentPart/$totalParts" else ""
         
         val sizeText = if (totalSize.isNotEmpty()) {
             val downloaded = com.waigi.dock.download.Downloader.calculateDownloadedSize(totalSize, progress)
             if (downloaded.isNotEmpty()) "$downloaded / $totalSize" else totalSize
         } else ""
 
-        val subText = listOf(sizeText, speedText, etaText).filter { it.isNotEmpty() }.joinToString(" · ")
+        val subText = if (isPaused) {
+            listOf("Paused", sizeText).filter { it.isNotEmpty() }.joinToString(" · ")
+        } else {
+            listOf(partText, sizeText, speedText, etaText).filter { it.isNotEmpty() }.joinToString(" · ")
+        }
 
-        return NotificationCompat.Builder(context, CHANNEL_DOWNLOAD_PROGRESS)
+        val builder = NotificationCompat.Builder(context, CHANNEL_DOWNLOAD_PROGRESS)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title.ifEmpty { "Downloading…" })
-            .setContentText(subText.ifEmpty { "Starting…" })
-            .setProgress(100, progressInt, progressInt == 0)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelIntent)
+            .setContentText(subText.ifEmpty { if (isPaused) "Paused" else "Starting…" })
+            .setProgress(100, progressInt, progressInt == 0 && !isPaused)
             .setDeleteIntent(deleteIntent)
-            .setOngoing(true)
+            .setOngoing(!isPaused)
             .setSilent(true)
             .setOnlyAlertOnce(true)
-            .build()
+
+        if (isPaused) {
+            builder.addAction(R.drawable.lucide_ic_play, "Resume", resumeIntent)
+        } else {
+            builder.addAction(R.drawable.lucide_ic_pause, "Pause", pauseIntent)
+        }
+        builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", cancelIntent)
+
+        return builder.build()
     }
 
     /** Build a completion notification (success). */

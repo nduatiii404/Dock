@@ -21,6 +21,9 @@ data class DownloadTask(
     val isAudio: Boolean = false,
     val formatId: String? = null,
     val totalSize: String = "",
+    val currentPart: Int = 0,
+    val totalParts: Int = 0,
+    val isMerging: Boolean = false,
 ) {
     /** Notification ID derived from the task ID so each task gets its own notification. */
     val notificationId: Int get() = id.hashCode()
@@ -39,6 +42,9 @@ sealed class TaskState {
         val speedText: String = "",
         val etaSeconds: Long = -1L,
     ) : TaskState()
+
+    /** Merging downloaded parts/formats using ffmpeg */
+    data class Merging(val message: String = "Merging parts…") : TaskState()
 
     /** Download paused by the user */
     data class Paused(
@@ -60,5 +66,5 @@ sealed class TaskState {
         get() = this is Completed || this is Cancelled || this is Error
 
     val isBusy: Boolean
-        get() = this is FetchingInfo || this is Downloading
+        get() = this is FetchingInfo || this is Downloading || this is Merging
 }

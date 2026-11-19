@@ -167,6 +167,8 @@ fun SettingsScreen() {
     val accentIndex by com.waigi.dock.util.PreferenceUtil.accentColorFlow.collectAsState()
     val bgStyle by com.waigi.dock.util.PreferenceUtil.backgroundStyleFlow.collectAsState()
     val showGradientHeader by com.waigi.dock.util.PreferenceUtil.showGradientHeaderFlow.collectAsState()
+    val floatingBottomNav by com.waigi.dock.util.PreferenceUtil.floatingBottomNavFlow.collectAsState()
+    val swipeToDismissHistory by com.waigi.dock.util.PreferenceUtil.swipeToDismissHistoryFlow.collectAsState()
     // 0 = STABLE, 1 = NIGHTLY
     var ytDlpChannel by remember { mutableIntStateOf(YT_DLP_CHANNEL_KEY.getInt(1)) }
     var ytDlpAutoUpdate by remember { mutableStateOf(YT_DLP_AUTO_UPDATE.getBoolean(true)) }
@@ -422,7 +424,11 @@ fun SettingsScreen() {
                 when (category) {
                     SettingsCategory.APPEARANCE -> {
                         SettingsSectionHeader("Appearance")
-                        SettingsLabel("Accent color")
+                        SettingsLabel(
+                            text = "Accent color",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                        )
                         Spacer(modifier = Modifier.height(8.dp))
                         Row(
                             modifier = Modifier.horizontalScroll(rememberScrollState()),
@@ -438,7 +444,11 @@ fun SettingsScreen() {
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
-                        SettingsLabel("Background style")
+                        SettingsLabel(
+                            text = "Background style",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                        )
                         Spacer(modifier = Modifier.height(8.dp))
                         Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                             BgStyleRow(
@@ -463,13 +473,30 @@ fun SettingsScreen() {
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
-                        SettingsLabel("Home screen banner")
+                        SettingsLabel(
+                            text = "Home screen banner",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                        )
                         Spacer(modifier = Modifier.height(8.dp))
                         SwitchRow(
                             label = "Gradient Header",
                             sublabel = "Vibrant gradient banner on home screen",
                             checked = showGradientHeader,
                             onCheckedChange = { com.waigi.dock.util.PreferenceUtil.updateShowGradientHeader(it) }
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        SettingsLabel(
+                            text = "Navigation Bar",
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        SwitchRow(
+                            label = "Floating Navigation Bar",
+                            sublabel = "Float and round the bottom navigation bar above content",
+                            checked = floatingBottomNav,
+                            onCheckedChange = { com.waigi.dock.util.PreferenceUtil.updateFloatingBottomNav(it) }
                         )
                     }
                     SettingsCategory.GENERAL_DOWNLOADS -> {
@@ -537,6 +564,12 @@ fun SettingsScreen() {
                             sublabel = "Display progress and completion notifications",
                             checked = notificationsEnabled,
                             onCheckedChange = { notificationsEnabled = it; NOTIFICATION.updateBoolean(it) }
+                        )
+                        SwitchRow(
+                            label = "Swipe Actions in History",
+                            sublabel = "Swipe history cards left to reveal the delete button",
+                            checked = swipeToDismissHistory,
+                            onCheckedChange = { com.waigi.dock.util.PreferenceUtil.updateSwipeToDismissHistory(it) }
                         )
                         InputFieldRow(
                             label = "Filename Output Template",
@@ -1173,11 +1206,15 @@ private fun SettingsSectionHeader(title: String) {
 }
 
 @Composable
-private fun SettingsLabel(text: String) {
+private fun SettingsLabel(
+    text: String,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    fontWeight: FontWeight = FontWeight.Normal,
+) {
     Text(
         text = text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurface,
+        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = fontWeight),
+        color = color,
     )
 }
 

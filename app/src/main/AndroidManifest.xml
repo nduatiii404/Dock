@@ -21,6 +21,7 @@
     <application
         android:name=".DockApp"
         android:allowBackup="true"
+        android:extractNativeLibs="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
@@ -28,6 +29,13 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Dock">
+
+        <!-- Crash Handler Activity in isolated process -->
+        <activity
+            android:name=".CrashActivity"
+            android:process=":crash"
+            android:exported="false"
+            android:theme="@style/Theme.Dock" />
 
         <!-- Main Activity -->
         <activity

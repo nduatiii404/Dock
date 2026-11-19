@@ -1,14 +1,22 @@
 package com.waigi.dock.ui
 
+import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -16,24 +24,35 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import kotlin.math.roundToInt
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
@@ -78,6 +97,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.rememberNavController
+import androidx.compose.ui.zIndex
+import com.waigi.dock.player.VideoSwipeViewerScreen
 import com.waigi.dock.download.Downloader
 import com.waigi.dock.download.TaskState
 import com.waigi.dock.ui.navigation.Screen
@@ -189,6 +210,9 @@ fun DockNavHost(
     var historyRect by remember { mutableStateOf<Rect?>(null) }
     var settingsRect by remember { mutableStateOf<Rect?>(null) }
 
+    var activeVideoPlaylist by remember { mutableStateOf<List<Uri>?>(null) }
+    var activeVideoInitialIndex by remember { mutableIntStateOf(0) }
+
     // Helper: render the screen for a given page index
     @Composable
     fun PageContent(page: Int) {
@@ -198,10 +222,17 @@ fun DockNavHost(
                 onClipboardPositioned = { rect -> clipboardRect = rect }
             )
             1 -> DownloadsScreen()
-            2 -> HistoryScreen()
+            2 -> HistoryScreen(
+                onPlayVideo = { uris, initialIndex ->
+                    activeVideoPlaylist = uris
+                    activeVideoInitialIndex = initialIndex
+                }
+            )
             3 -> SettingsScreen()
         }
     }
+
+    val isFloatingNav by PreferenceUtil.floatingBottomNavFlow.collectAsState()
 
     DockTheme {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -211,20 +242,23 @@ fun DockNavHost(
             ) {
                 Scaffold(
                     bottomBar = {
-                        DockBottomBar(
-                            selectedPage = pagerState.currentPage,
-                            onTabSelected = { page -> navigateByClick(page) },
-                            onTabPositioned = { tab, rect ->
-                                when (tab) {
-                                    Screen.Downloads -> downloadsRect = rect
-                                    Screen.History   -> historyRect = rect
-                                    Screen.Settings  -> settingsRect = rect
-                                    else             -> {}
+                        if (activeVideoPlaylist == null) {
+                            DockBottomBar(
+                                pagerState = pagerState,
+                                isFloating = isFloatingNav,
+                                onTabSelected = { page -> navigateByClick(page) },
+                                onTabPositioned = { tab, rect ->
+                                    when (tab) {
+                                        Screen.Downloads -> downloadsRect = rect
+                                        Screen.History   -> historyRect = rect
+                                        Screen.Settings  -> settingsRect = rect
+                                        else             -> {}
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                     },
-                    contentWindowInsets = WindowInsets.navigationBars,
+                    contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 ) { innerPadding ->
                     Box(
                         modifier = Modifier
@@ -242,12 +276,31 @@ fun DockNavHost(
                                     scaleY = incomingScale.value
                                 },
                             beyondViewportPageCount = 1,
-                            userScrollEnabled = true,
+                            userScrollEnabled = activeVideoPlaylist == null,
                             key = { it },
                         ) { page ->
                             PageContent(page)
                         }
                     }
+                }
+            }
+
+            // Fullscreen Lightweight Video Player Overlay (Covers bottom nav and tabs completely)
+            activeVideoPlaylist?.let { playlist ->
+                BackHandler {
+                    activeVideoPlaylist = null
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .zIndex(999f)
+                ) {
+                    VideoSwipeViewerScreen(
+                        videos = playlist,
+                        initialIndex = activeVideoInitialIndex,
+                        onClose = { activeVideoPlaylist = null }
+                    )
                 }
             }
 
@@ -552,16 +605,20 @@ private fun WelcomeScreenOverlay(
 
 @Composable
 private fun DockBottomBar(
-    selectedPage: Int,
+    pagerState: PagerState,
+    isFloating: Boolean,
     onTabSelected: (Int) -> Unit,
     onTabPositioned: (Screen, Rect) -> Unit = { _, _ -> },
 ) {
+    val coroutineScope = rememberCoroutineScope()
+
     // Observe active downloads for the animated icon
     val tasks by Downloader.tasks.collectAsState()
     val hasActiveDownloads = tasks.values.any {
         it.state is TaskState.Downloading ||
         it.state is TaskState.FetchingInfo ||
-        it.state is TaskState.Queued
+        it.state is TaskState.Queued ||
+        it.state is TaskState.Merging
     }
 
     val infiniteTransition = rememberInfiniteTransition(label = "download_bounce")
@@ -575,44 +632,182 @@ private fun DockBottomBar(
         label = "download_icon_bounce"
     )
 
-    NavigationBar(
-        containerColor = MaterialTheme.colorScheme.background,
-        tonalElevation = 0.dp,
-        windowInsets = WindowInsets.navigationBars,
-    ) {
-        bottomNavTabs.forEachIndexed { index, tab ->
-            val isSelected = index == selectedPage
-            val isDownloadsTab = tab == Screen.Downloads
+    // ── Live Animation transitions between Floating and Fixed mode ──
+    val animHorizontalPadding by animateDpAsState(
+        targetValue = if (isFloating) 20.dp else 0.dp,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "nav_horiz_padding"
+    )
+    val animBottomPadding by animateDpAsState(
+        targetValue = if (isFloating) 10.dp else 0.dp,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "nav_bottom_padding"
+    )
+    val animCornerRadius by animateDpAsState(
+        targetValue = if (isFloating) 26.dp else 0.dp,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "nav_corner_radius"
+    )
+    val animElevation by animateDpAsState(
+        targetValue = if (isFloating) 8.dp else 0.dp,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "nav_elevation"
+    )
+    val animBorderAlpha by animateFloatAsState(
+        targetValue = if (isFloating) 0.35f else 0f,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "nav_border_alpha"
+    )
+    val animContainerColor by animateColorAsState(
+        targetValue = if (isFloating) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f) else MaterialTheme.colorScheme.background,
+        animationSpec = tween(durationMillis = 350),
+        label = "nav_container_color"
+    )
 
-            NavigationBarItem(
-                selected = isSelected,
-                onClick = { onTabSelected(index) },
-                modifier = Modifier.onGloballyPositioned {
-                    onTabPositioned(tab, it.boundsInRoot())
-                },
-                icon = {
-                    Icon(
-                        imageVector = if (isSelected) tab.selectedIcon else tab.icon,
-                        contentDescription = tab.label,
-                        modifier = if (isDownloadsTab && hasActiveDownloads) {
-                            Modifier.graphicsLayer { translationY = bounceY }
-                        } else Modifier
-                    )
-                },
-                label = {
-                    Text(
-                        text = tab.label,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                },
-                colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                    selectedTextColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                ),
-            )
+    val continuousPage = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
+        .coerceIn(0f, (bottomNavTabs.size - 1).toFloat())
+    val isScrollInProgress = pagerState.isScrollInProgress
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = animHorizontalPadding, vertical = animBottomPadding)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp),
+            shape = RoundedCornerShape(animCornerRadius),
+            color = animContainerColor,
+            border = if (animBorderAlpha > 0.01f) {
+                BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = animBorderAlpha))
+            } else null,
+            shadowElevation = animElevation,
+        ) {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                val tabCount = bottomNavTabs.size
+                val tabWidth = maxWidth / tabCount
+                val pillWidth = tabWidth - 6.dp
+                val pillHeight = 58.dp // 64dp bar - 3dp top - 3dp bottom = 58dp
+                val pillCornerRadius = if (animCornerRadius > 3.dp) {
+                    (animCornerRadius - 3.dp)
+                } else {
+                    12.dp
+                }
+
+                val density = LocalDensity.current
+                val tabWidthPx = with(density) { tabWidth.toPx() }.coerceAtLeast(1f)
+                val pageSizePx = pagerState.layoutInfo.pageSize.toFloat().coerceAtLeast(1f)
+
+                // The target position follows continuous page offset 1:1 during swipes and gestures
+                val targetPillX = (continuousPage * tabWidth.value).dp + 3.dp
+                val animatedPillX by animateDpAsState(
+                    targetValue = targetPillX,
+                    animationSpec = if (isScrollInProgress) snap() else spring(
+                        stiffness = Spring.StiffnessMediumLow,
+                        dampingRatio = Spring.DampingRatioLowBouncy
+                    ),
+                    label = "tab_pill_x"
+                )
+
+                // ── The full-height flowing indicator pill covering both icon and text ──
+                Box(
+                    modifier = Modifier
+                        .offset(x = animatedPillX, y = 3.dp)
+                        .width(pillWidth)
+                        .height(pillHeight)
+                        .clip(RoundedCornerShape(pillCornerRadius))
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                )
+
+                // ── Tab items rendered on top of the sliding indicator pill & supporting hold-and-slide ──
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(tabWidthPx, pageSizePx) {
+                            detectHorizontalDragGestures(
+                                onDragStart = { },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    // Dragging right moves pill right 1:1 with finger
+                                    val pagerDeltaPx = (dragAmount / tabWidthPx) * pageSizePx
+                                    pagerState.dispatchRawDelta(pagerDeltaPx)
+                                },
+                                onDragEnd = {
+                                    val target = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
+                                        .roundToInt()
+                                        .coerceIn(0, bottomNavTabs.size - 1)
+                                    coroutineScope.launch {
+                                        pagerState.animateScrollToPage(target)
+                                    }
+                                },
+                                onDragCancel = {
+                                    val target = (pagerState.currentPage + pagerState.currentPageOffsetFraction)
+                                        .roundToInt()
+                                        .coerceIn(0, bottomNavTabs.size - 1)
+                                    coroutineScope.launch {
+                                        pagerState.animateScrollToPage(target)
+                                    }
+                                }
+                            )
+                        }
+                ) {
+                    bottomNavTabs.forEachIndexed { index, tab ->
+                        val isSelected = index == pagerState.currentPage
+                        val isDownloadsTab = tab == Screen.Downloads
+
+                        val iconColor by animateColorAsState(
+                            targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            label = "tab_icon_color"
+                        )
+                        val textColor by animateColorAsState(
+                            targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            label = "tab_text_color"
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight()
+                                .clickable(
+                                    interactionSource = remember { MutableInteractionSource() },
+                                    indication = null,
+                                    onClick = { onTabSelected(index) }
+                                )
+                                .onGloballyPositioned {
+                                    onTabPositioned(tab, it.boundsInRoot())
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (isSelected) tab.selectedIcon else tab.icon,
+                                    contentDescription = tab.label,
+                                    tint = iconColor,
+                                    modifier = if (isDownloadsTab && hasActiveDownloads) {
+                                        Modifier.size(24.dp).graphicsLayer { translationY = bounceY }
+                                    } else {
+                                        Modifier.size(24.dp)
+                                    }
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = tab.label,
+                                    style = MaterialTheme.typography.labelSmall.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    ),
+                                    color = textColor,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

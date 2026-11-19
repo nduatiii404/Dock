@@ -8,6 +8,8 @@ import kotlinx.coroutines.flow.asStateFlow
 const val ACCENT_COLOR_KEY      = "accent_color"
 const val BACKGROUND_STYLE_KEY  = "background_style"
 const val SHOW_GRADIENT_HEADER = "show_gradient_header"
+const val FLOATING_BOTTOM_NAV   = "floating_bottom_nav"
+const val SWIPE_TO_DISMISS_HISTORY = "swipe_to_dismiss_history"
 
 // Background style values
 const val BG_AMOLED  = 0   // Pure black #000000 (default)
@@ -158,6 +160,8 @@ object PreferenceUtil {
     val notificationsEnabled get() = NOTIFICATION.getBoolean(true)
     val allowCellularDownload get() = CELLULAR_DOWNLOAD.getBoolean(true)
     val showGradientHeader get() = SHOW_GRADIENT_HEADER.getBoolean(false)
+    val floatingBottomNav get() = FLOATING_BOTTOM_NAV.getBoolean(false)
+    val swipeToDismissHistory get() = SWIPE_TO_DISMISS_HISTORY.getBoolean(true)
     val clipboardAutoPaste get() = CLIPBOARD_AUTO_PASTE.getBoolean(false)
     val customCmdArgs get() = CUSTOM_CMD_ARGS.getString()
     val maxConcurrentDownloads get() = MAX_CONCURRENT_DOWNLOADS.getInt(2)
@@ -198,6 +202,12 @@ object PreferenceUtil {
     private val _showGradientHeaderFlow = MutableStateFlow(SHOW_GRADIENT_HEADER.getBoolean(false))
     val showGradientHeaderFlow = _showGradientHeaderFlow.asStateFlow()
 
+    private val _floatingBottomNavFlow = MutableStateFlow(FLOATING_BOTTOM_NAV.getBoolean(false))
+    val floatingBottomNavFlow = _floatingBottomNavFlow.asStateFlow()
+
+    private val _swipeToDismissHistoryFlow = MutableStateFlow(SWIPE_TO_DISMISS_HISTORY.getBoolean(true))
+    val swipeToDismissHistoryFlow = _swipeToDismissHistoryFlow.asStateFlow()
+
     fun updateAccentColor(index: Int) {
         ACCENT_COLOR_KEY.updateInt(index)
         _accentColorFlow.value = index
@@ -211,6 +221,16 @@ object PreferenceUtil {
     fun updateShowGradientHeader(show: Boolean) {
         SHOW_GRADIENT_HEADER.updateBoolean(show)
         _showGradientHeaderFlow.value = show
+    }
+
+    fun updateFloatingBottomNav(floating: Boolean) {
+        FLOATING_BOTTOM_NAV.updateBoolean(floating)
+        _floatingBottomNavFlow.value = floating
+    }
+
+    fun updateSwipeToDismissHistory(enabled: Boolean) {
+        SWIPE_TO_DISMISS_HISTORY.updateBoolean(enabled)
+        _swipeToDismissHistoryFlow.value = enabled
     }
 }
 

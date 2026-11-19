@@ -27,6 +27,10 @@ interface HistoryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(item: DownloadedItem): Long
 
+    /** Update thumbnail path for a specific item. */
+    @Query("UPDATE download_history SET thumbnail = :thumbnail WHERE id = :id")
+    suspend fun updateThumbnail(id: Long, thumbnail: String)
+
     /** Delete a specific item. */
     @Delete
     suspend fun delete(item: DownloadedItem)

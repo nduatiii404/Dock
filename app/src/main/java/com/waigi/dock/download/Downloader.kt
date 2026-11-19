@@ -9,6 +9,7 @@ import com.waigi.dock.database.DownloadedItem
 import com.waigi.dock.repository.HistoryRepository
 import com.waigi.dock.util.DownloadPreferences
 import com.waigi.dock.util.DownloadUtil
+import com.waigi.dock.util.ThumbnailManager
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +42,7 @@ object Downloader : KoinComponent {
     /** Must be called once in DockApp.onCreate before any downloads start. */
     fun init(context: Context) {
         appContext = context.applicationContext
+        com.waigi.dock.util.YoutubeDLUpdater.ensureInitialized(appContext)
         registerNetworkCallback(appContext)
     }
 
@@ -62,8 +64,18 @@ object Downloader : KoinComponent {
     fun enqueue(
         url: String,
         preferences: DownloadPreferences = DownloadPreferences.createFromPreferences(),
+        taskId: String? = null,
+        title: String? = null,
+        thumbnail: String? = null,
     ): String {
-        val task = DownloadTask(url = url, isAudio = preferences.extractAudio)
+        val id = taskId ?: java.util.UUID.randomUUID().toString()
+        val task = DownloadTask(
+            id = id,
+            url = url,
+            title = title ?: "",
+            thumbnail = thumbnail,
+            isAudio = preferences.extractAudio
+        )
         taskPreferences[task.id] = preferences
         addTask(task)
         checkQueue()
@@ -157,7 +169,7 @@ object Downloader : KoinComponent {
 
     private fun checkQueue() {
         val maxActive = com.waigi.dock.util.PreferenceUtil.maxConcurrentDownloads
-        val activeCount = _tasks.value.values.count { it.state == TaskState.FetchingInfo || it.state is TaskState.Downloading }
+        val activeCount = _tasks.value.values.count { it.state == TaskState.FetchingInfo || it.state is TaskState.Downloading || it.state is TaskState.Merging }
         if (activeCount >= maxActive) return
 
         val nextTask = _tasks.value.values.firstOrNull { it.state == TaskState.Queued } ?: return
@@ -253,6 +265,11 @@ object Downloader : KoinComponent {
             )
         }
 
+        var detectedTotalParts = if (!preferences.extractAudio) 2 else 1
+        var currentPartNum = 1
+        var hasStartedFirstPart = false
+        var isMergingState = false
+
         val downloadResult = DownloadUtil.download(
             url = url,
             taskKey = taskId,
@@ -263,18 +280,58 @@ object Downloader : KoinComponent {
             val parsedEta = extractEta(line, etaSeconds)
             val speedText = extractSpeed(line)
             val parsedTotal = extractTotalSize(line)
+
+            // Check for explicit part markers (e.g. "Downloading video 1 of 2", "frag 1/20", "item 1 of 2")
+            val itemOfMatch = Regex("""(?:Downloading\s+(?:video|item|part)\s+)?(\d+)\s+of\s+(\d+)""", RegexOption.IGNORE_CASE).find(line)
+            if (itemOfMatch != null) {
+                val curr = itemOfMatch.groupValues[1].toIntOrNull() ?: currentPartNum
+                val total = itemOfMatch.groupValues[2].toIntOrNull() ?: detectedTotalParts
+                currentPartNum = curr
+                detectedTotalParts = total
+            }
+
+            val fragMatch = Regex("""frag(?:ment)?\s+(\d+)/(\d+)""", RegexOption.IGNORE_CASE).find(line)
+            if (fragMatch != null) {
+                val curr = fragMatch.groupValues[1].toIntOrNull() ?: currentPartNum
+                val total = fragMatch.groupValues[2].toIntOrNull() ?: detectedTotalParts
+                currentPartNum = curr
+                detectedTotalParts = total
+            }
+
+            // Check for new stream destination transition (e.g., video stream finished, now downloading audio stream)
+            if (line.contains("[download] Destination:")) {
+                if (hasStartedFirstPart && currentPartNum < detectedTotalParts) {
+                    currentPartNum++
+                }
+            }
+            if (parsedProgress > 0f) {
+                hasStartedFirstPart = true
+            }
+
+            // Check for merger or ffmpeg merge phase
+            if (line.contains("[Merger]") || line.contains("[ffmpeg] Merging") || line.contains("Merging formats", ignoreCase = true)) {
+                isMergingState = true
+                currentPartNum = detectedTotalParts
+            }
+
             updateTask(taskId) {
                 val resolvedTotal = if (parsedTotal.isNotEmpty()) parsedTotal else it.totalSize
-                val resolvedSpeed = if (speedText.isNotEmpty()) speedText else it.speedText
+                val resolvedSpeed = if (isMergingState) "Merging formats…" else if (speedText.isNotEmpty()) speedText else it.speedText
+                val resolvedEta = if (isMergingState) -1L else parsedEta
+                val resolvedProgress = if (isMergingState) 100f else parsedProgress
+
                 it.copy(
-                    progress = parsedProgress,
+                    progress = resolvedProgress,
                     speedText = resolvedSpeed,
-                    etaSeconds = parsedEta,
+                    etaSeconds = resolvedEta,
                     totalSize = resolvedTotal,
-                    state = TaskState.Downloading(
-                        progress = parsedProgress,
+                    currentPart = currentPartNum,
+                    totalParts = detectedTotalParts,
+                    isMerging = isMergingState,
+                    state = if (isMergingState) TaskState.Merging("Merging parts…") else TaskState.Downloading(
+                        progress = resolvedProgress,
                         speedText = resolvedSpeed,
-                        etaSeconds = parsedEta,
+                        etaSeconds = resolvedEta,
                     ),
                 )
             }
@@ -295,6 +352,9 @@ object Downloader : KoinComponent {
                     outputPath = outputPath,
                     state = TaskState.Completed(outputPath),
                     progress = 100f,
+                    isMerging = false,
+                    currentPart = detectedTotalParts,
+                    totalParts = detectedTotalParts,
                 )
             }
 
@@ -303,12 +363,24 @@ object Downloader : KoinComponent {
             task?.let { t ->
                 scope.launch {
                     if (!com.waigi.dock.util.PreferenceUtil.privateMode) {
+                        val persistentThumb = if (::appContext.isInitialized) {
+                            ThumbnailManager.persistThumbnail(
+                                context = appContext,
+                                remoteUrl = t.thumbnail,
+                                localFilePath = outputPath,
+                                isAudio = t.isAudio,
+                                key = outputPath,
+                            ) ?: t.thumbnail
+                        } else {
+                            t.thumbnail
+                        }
+
                         historyRepository.save(
                             DownloadedItem(
                                 url = t.url,
                                 title = t.title.ifEmpty { t.url },
                                 uploader = t.uploader,
-                                thumbnail = t.thumbnail,
+                                thumbnail = persistentThumb,
                                 filePath = outputPath,
                                 isAudio = t.isAudio,
                             )

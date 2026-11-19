@@ -41,12 +41,16 @@ class DownloadService : Service() {
         private const val TAG = "DownloadService"
 
         const val ACTION_DOWNLOAD = "com.waigi.dock.DOWNLOAD"
+        const val ACTION_PAUSE    = "com.waigi.dock.PAUSE"
+        const val ACTION_RESUME   = "com.waigi.dock.RESUME"
         const val ACTION_CANCEL   = "com.waigi.dock.CANCEL"
         const val ACTION_STOP     = "com.waigi.dock.STOP"
         const val ACTION_REPOST_NOTIFICATION = "com.waigi.dock.REPOST_NOTIFICATION"
 
         const val EXTRA_URL       = "extra_url"
         const val EXTRA_TASK_ID   = "extra_task_id"
+        const val EXTRA_TITLE     = "extra_title"
+        const val EXTRA_THUMBNAIL = "extra_thumbnail"
         const val EXTRA_IS_AUDIO  = "extra_is_audio"
         const val EXTRA_VIDEO_QUALITY = "extra_video_quality"
         const val EXTRA_WRITE_SUBTITLE = "extra_write_subtitle"
@@ -59,10 +63,16 @@ class DownloadService : Service() {
             context: Context,
             url: String,
             preferences: DownloadPreferences = DownloadPreferences.createFromPreferences(),
+            taskId: String? = null,
+            title: String? = null,
+            thumbnail: String? = null,
         ) {
             val intent = Intent(context, DownloadService::class.java).apply {
                 action = ACTION_DOWNLOAD
                 putExtra(EXTRA_URL, url)
+                if (taskId != null) putExtra(EXTRA_TASK_ID, taskId)
+                if (title != null) putExtra(EXTRA_TITLE, title)
+                if (thumbnail != null) putExtra(EXTRA_THUMBNAIL, thumbnail)
                 putExtra(EXTRA_IS_AUDIO, preferences.extractAudio)
                 putExtra(EXTRA_VIDEO_QUALITY, preferences.videoQuality)
                 putExtra(EXTRA_WRITE_SUBTITLE, preferences.writeSubtitle)
@@ -71,6 +81,24 @@ class DownloadService : Service() {
                 putExtra(EXTRA_EMBED_THUMBNAIL, preferences.embedThumbnail)
             }
             context.startForegroundService(intent)
+        }
+
+        /** Convenience: pause a specific task. */
+        fun pauseTask(context: Context, taskId: String) {
+            val intent = Intent(context, DownloadService::class.java).apply {
+                action = ACTION_PAUSE
+                putExtra(EXTRA_TASK_ID, taskId)
+            }
+            context.startService(intent)
+        }
+
+        /** Convenience: resume a specific task. */
+        fun resumeTask(context: Context, taskId: String) {
+            val intent = Intent(context, DownloadService::class.java).apply {
+                action = ACTION_RESUME
+                putExtra(EXTRA_TASK_ID, taskId)
+            }
+            context.startService(intent)
         }
 
         /** Convenience: cancel a specific task. */
@@ -131,8 +159,21 @@ class DownloadService : Service() {
                     subtitleLanguage = subtitleLang,
                     embedThumbnail = embedThumbnail
                 )
-                Log.d(TAG, "Starting download: $url")
-                Downloader.enqueue(url, prefs)
+                val taskId = intent.getStringExtra(EXTRA_TASK_ID)
+                val title = intent.getStringExtra(EXTRA_TITLE)
+                val thumbnail = intent.getStringExtra(EXTRA_THUMBNAIL)
+                Log.d(TAG, "Starting download: $url (taskId: $taskId, title: $title)")
+                Downloader.enqueue(url, prefs, taskId, title, thumbnail)
+            }
+            ACTION_PAUSE -> {
+                val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return START_NOT_STICKY
+                Log.d(TAG, "Pausing task: $taskId")
+                Downloader.pause(taskId)
+            }
+            ACTION_RESUME -> {
+                val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return START_NOT_STICKY
+                Log.d(TAG, "Resuming task: $taskId")
+                Downloader.resume(taskId)
             }
             ACTION_CANCEL -> {
                 val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return START_NOT_STICKY
@@ -179,8 +220,8 @@ class DownloadService : Service() {
         processedTasks.retainAll(taskMap.keys)
         startedToastsShown.retainAll(taskMap.keys)
 
-        val activeTasks = taskMap.values.filter { it.state.isBusy }
-        val activeCount = activeTasks.size
+        val activeTasks = taskMap.values.filter { it.state.isBusy || it.state is TaskState.Paused }
+        val activeCount = taskMap.values.count { it.state.isBusy }
 
         if (activeCount > 0) {
             hasStartedActiveTask = true
@@ -196,7 +237,21 @@ class DownloadService : Service() {
         activeTasks.forEach { task ->
             if (notificationsEnabled) {
                 val state = task.state
-                if (state is TaskState.Downloading) {
+                if (state is TaskState.Merging || task.isMerging) {
+                    val notif = NotificationUtil.buildProgressNotification(
+                        context = this,
+                        taskId = task.id,
+                        title = task.title,
+                        progress = 100f,
+                        speedText = "Merging formats…",
+                        etaSeconds = -1,
+                        totalSize = task.totalSize,
+                        currentPart = task.currentPart,
+                        totalParts = task.totalParts,
+                        isMerging = true,
+                    )
+                    notificationManager.notify(task.notificationId, notif)
+                } else if (state is TaskState.Downloading) {
                     val notif = NotificationUtil.buildProgressNotification(
                         context = this,
                         taskId = task.id,
@@ -205,6 +260,25 @@ class DownloadService : Service() {
                         speedText = state.speedText,
                         etaSeconds = state.etaSeconds,
                         totalSize = task.totalSize,
+                        currentPart = task.currentPart,
+                        totalParts = task.totalParts,
+                        isMerging = false,
+                        isPaused = false,
+                    )
+                    notificationManager.notify(task.notificationId, notif)
+                } else if (state is TaskState.Paused) {
+                    val notif = NotificationUtil.buildProgressNotification(
+                        context = this,
+                        taskId = task.id,
+                        title = task.title,
+                        progress = state.progress,
+                        speedText = "",
+                        etaSeconds = -1,
+                        totalSize = task.totalSize,
+                        currentPart = task.currentPart,
+                        totalParts = task.totalParts,
+                        isMerging = false,
+                        isPaused = true,
                     )
                     notificationManager.notify(task.notificationId, notif)
                 } else if (state is TaskState.FetchingInfo) {
@@ -302,10 +376,23 @@ class DownloadService : Service() {
     private fun repostProgressNotification(taskId: String) {
         val task = Downloader.tasks.value[taskId] ?: return
         val state = task.state
-        if (state is TaskState.Downloading || state is TaskState.FetchingInfo) {
+        if (state is TaskState.Downloading || state is TaskState.Paused || state is TaskState.FetchingInfo || state is TaskState.Merging || task.isMerging) {
             val notificationsEnabled = com.waigi.dock.util.PreferenceUtil.notificationsEnabled
             if (notificationsEnabled) {
-                val notif = if (state is TaskState.Downloading) {
+                val notif = if (state is TaskState.Merging || task.isMerging) {
+                    NotificationUtil.buildProgressNotification(
+                        context = this,
+                        taskId = task.id,
+                        title = task.title,
+                        progress = 100f,
+                        speedText = "Merging formats…",
+                        etaSeconds = -1,
+                        totalSize = task.totalSize,
+                        currentPart = task.currentPart,
+                        totalParts = task.totalParts,
+                        isMerging = true,
+                    )
+                } else if (state is TaskState.Downloading) {
                     NotificationUtil.buildProgressNotification(
                         context = this,
                         taskId = task.id,
@@ -314,6 +401,24 @@ class DownloadService : Service() {
                         speedText = state.speedText,
                         etaSeconds = state.etaSeconds,
                         totalSize = task.totalSize,
+                        currentPart = task.currentPart,
+                        totalParts = task.totalParts,
+                        isMerging = false,
+                        isPaused = false,
+                    )
+                } else if (state is TaskState.Paused) {
+                    NotificationUtil.buildProgressNotification(
+                        context = this,
+                        taskId = task.id,
+                        title = task.title,
+                        progress = state.progress,
+                        speedText = "",
+                        etaSeconds = -1,
+                        totalSize = task.totalSize,
+                        currentPart = task.currentPart,
+                        totalParts = task.totalParts,
+                        isMerging = false,
+                        isPaused = true,
                     )
                 } else {
                     NotificationUtil.buildProgressNotification(

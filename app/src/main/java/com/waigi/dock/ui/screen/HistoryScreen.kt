@@ -3,10 +3,13 @@ package com.waigi.dock.ui.screen
 import android.content.Context
 import android.content.Intent
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -14,20 +17,25 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
@@ -37,6 +45,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -49,35 +58,44 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.zIndex
+import com.waigi.dock.player.LightweightVideoPlayer
+import com.waigi.dock.player.VideoSwipeViewerScreen
+import kotlin.math.roundToInt
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.waigi.dock.database.DownloadedItem
+import com.waigi.dock.service.DownloadService
+import com.waigi.dock.ui.components.HistoryItemInfoSheet
 import com.waigi.dock.ui.viewmodel.HistoryViewModel
+import com.waigi.dock.util.ThumbnailManager
 import org.koin.androidx.compose.koinViewModel
 import java.io.File
 import java.text.SimpleDateFormat
@@ -89,7 +107,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HistoryScreen(viewModel: HistoryViewModel = koinViewModel()) {
+fun HistoryScreen(
+    viewModel: HistoryViewModel = koinViewModel(),
+    onPlayVideo: ((videos: List<android.net.Uri>, initialIndex: Int) -> Unit)? = null
+) {
     val uiState by viewModel.uiState.collectAsState()
     val items by viewModel.items.collectAsState()
     val context = LocalContext.current
@@ -105,7 +126,16 @@ fun HistoryScreen(viewModel: HistoryViewModel = koinViewModel()) {
     var selectedItems by remember { mutableStateOf(setOf<DownloadedItem>()) }
     var isSelectionMode by remember { mutableStateOf(false) }
     var showDeleteSelectedDialog by remember { mutableStateOf(false) }
+    var itemToConfirmDelete by remember { mutableStateOf<DownloadedItem?>(null) }
+    var itemForInfoSheet by remember { mutableStateOf<DownloadedItem?>(null) }
+    var playingItem by remember { mutableStateOf<DownloadedItem?>(null) }
+    val swipeEnabled by com.waigi.dock.util.PreferenceUtil.swipeToDismissHistoryFlow.collectAsState()
 
+    BackHandler(enabled = playingItem != null) {
+        playingItem = null
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -230,7 +260,7 @@ fun HistoryScreen(viewModel: HistoryViewModel = koinViewModel()) {
                                 HistoryItemCard(
                                     item = item,
                                     index = index,
-                                    onOpen = { openFile(context, item) },
+                                    onOpen = { openFile(context, item) { playingItem = it } },
                                     onShare = { shareFile(context, item) },
                                     isSelected = isSelected,
                                     isSelectionMode = true,
@@ -244,15 +274,18 @@ fun HistoryScreen(viewModel: HistoryViewModel = koinViewModel()) {
                                             selectedItems = selectedItems + item
                                         }
                                     },
-                                    onLongPress = {}
+                                    onLongPress = {},
+                                    onSelfHeal = { id, path -> viewModel.updateThumbnail(id, path) },
+                                    onInfo = { itemForInfoSheet = item },
                                 )
                             }
                         } else {
-                            SwipeToDismissHistoryItem(
+                            SwipeToRevealHistoryItem(
                                 item = item,
                                 index = index,
-                                onDelete = { viewModel.deleteItem(item) },
-                                onOpen = { openFile(context, item) },
+                                enabled = swipeEnabled,
+                                onDeleteRequest = { itemToConfirmDelete = item },
+                                onOpen = { openFile(context, item) { playingItem = it } },
                                 onShare = { shareFile(context, item) },
                                 isSelected = isSelected,
                                 isSelectionMode = false,
@@ -271,13 +304,53 @@ fun HistoryScreen(viewModel: HistoryViewModel = koinViewModel()) {
                                         isSelectionMode = true
                                         selectedItems = setOf(item)
                                     }
-                                }
+                                },
+                                onSelfHeal = { id, path -> viewModel.updateThumbnail(id, path) },
+                                onInfo = { itemForInfoSheet = item },
                             )
                         }
                     }
                     item { Spacer(modifier = Modifier.height(16.dp)) }
                 }
             }
+        }
+
+        // ── Single item delete confirmation dialog (gray background) ─────────
+        itemToConfirmDelete?.let { item ->
+            AlertDialog(
+                onDismissRequest = { itemToConfirmDelete = null },
+                containerColor = Color(0xFF262626), // Gray confirmation dialog
+                titleContentColor = Color.White,
+                textContentColor = Color(0xFFDDDDDD),
+                shape = RoundedCornerShape(20.dp),
+                title = {
+                    Text(
+                        text = "Remove from history?",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                    )
+                },
+                text = {
+                    Text(
+                        text = "Remove \"${item.title.ifEmpty { "this download" }}\" from your history? The file stored on your device will remain untouched.",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            viewModel.deleteItem(item)
+                            itemToConfirmDelete = null
+                        }
+                    ) {
+                        Text("Delete", color = MaterialTheme.colorScheme.error, fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { itemToConfirmDelete = null }) {
+                        Text("Cancel", color = Color.LightGray)
+                    }
+                },
+            )
         }
 
         // ── Delete all dialog ─────────────────────────────────────────────────
@@ -318,77 +391,221 @@ fun HistoryScreen(viewModel: HistoryViewModel = koinViewModel()) {
                 },
             )
         }
+
+        // ── Video Details Bottom Sheet ───────────────────────────────────────
+        itemForInfoSheet?.let { item ->
+            HistoryItemInfoSheet(
+                item = item,
+                onDismiss = { itemForInfoSheet = null },
+                onRedownload = { toDownload ->
+                    val thumb = toDownload.thumbnail?.takeIf { it.isNotBlank() } ?: toDownload.filePath
+                    DownloadService.startDownload(
+                        context = context,
+                        url = toDownload.url,
+                        title = toDownload.title,
+                        thumbnail = thumb,
+                    )
+                    Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+    }
+
+    // Ultra-lightweight full-screen video swiper overlay
+    playingItem?.let { item ->
+        val file = File(item.filePath)
+        if (file.exists()) {
+            val videoItems = remember(items) {
+                items.filter { !it.isAudio && File(it.filePath).exists() }
+            }
+            val initialIndex = videoItems.indexOfFirst { it.id == item.id }.coerceAtLeast(0)
+            val videoUris = remember(videoItems, file) {
+                if (videoItems.isNotEmpty()) {
+                    videoItems.map { android.net.Uri.fromFile(File(it.filePath)) }
+                } else {
+                    listOf(android.net.Uri.fromFile(file))
+                }
+            }
+
+            if (onPlayVideo != null) {
+                LaunchedEffect(item) {
+                    onPlayVideo(videoUris, initialIndex)
+                    playingItem = null
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .zIndex(100f)
+                ) {
+                    VideoSwipeViewerScreen(
+                        videos = videoUris,
+                        initialIndex = initialIndex,
+                        onClose = { playingItem = null }
+                    )
+                }
+            }
+        } else {
+            Toast.makeText(context, "File not found", Toast.LENGTH_SHORT).show()
+            playingItem = null
+        }
     }
 }
+}
 
-// ── Swipe-to-dismiss wrapper ──────────────────────────────────────────────────
+// ── Swipe-to-reveal wrapper ───────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SwipeToDismissHistoryItem(
+private fun SwipeToRevealHistoryItem(
     item: DownloadedItem,
     index: Int,
-    onDelete: () -> Unit,
+    enabled: Boolean,
+    onDeleteRequest: () -> Unit,
     onOpen: () -> Unit,
     onShare: () -> Unit,
     isSelected: Boolean,
     isSelectionMode: Boolean,
     onToggleSelect: () -> Unit,
     onLongPress: () -> Unit,
+    onSelfHeal: ((Long, String) -> Unit)? = null,
+    onInfo: () -> Unit = {},
 ) {
-    val dismissState = rememberSwipeToDismissBoxState()
-
-    LaunchedEffect(dismissState.currentValue) {
-        if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
-            onDelete()
+    if (!enabled || isSelectionMode) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .clip(RoundedCornerShape(14.dp))
+        ) {
+            HistoryItemCard(
+                item = item,
+                index = index,
+                onOpen = onOpen,
+                onShare = onShare,
+                isSelected = isSelected,
+                isSelectionMode = isSelectionMode,
+                onToggleSelect = onToggleSelect,
+                onLongPress = onLongPress,
+                onSelfHeal = onSelfHeal,
+                onInfo = onInfo,
+            )
         }
+        return
     }
 
-    SwipeToDismissBox(
-        state = dismissState,
-        enableDismissFromStartToEnd = false,
-        enableDismissFromEndToStart = !isSelectionMode,
+    val density = LocalDensity.current
+    val maxRevealPx = with(density) { 76.dp.toPx() }
+    val offsetX = remember { Animatable(0f) }
+    val coroutineScope = rememberCoroutineScope()
+    val isRevealed = offsetX.value <= -maxRevealPx * 0.7f
+    val revealFraction = (-offsetX.value / maxRevealPx).coerceIn(0f, 1f)
+
+    Box(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp)
-            .clip(RoundedCornerShape(14.dp)),
-        backgroundContent = {
-            val color by animateColorAsState(
-                targetValue = if (dismissState.targetValue == SwipeToDismissBoxValue.EndToStart)
-                    MaterialTheme.colorScheme.error
-                else
-                    Color.Transparent,
-                animationSpec = tween(200),
-                label = "swipe_color",
-            )
+            .clip(RoundedCornerShape(14.dp))
+    ) {
+        // Background: transparent delete area revealed when card slides left
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(Color.Transparent)
+                .clickable(enabled = isRevealed) {
+                    onDeleteRequest()
+                    coroutineScope.launch { offsetX.animateTo(0f) }
+                },
+            contentAlignment = Alignment.CenterEnd
+        ) {
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .background(color)
-                    .padding(end = 16.dp),
-                contentAlignment = Alignment.CenterEnd,
+                    .width(76.dp)
+                    .fillMaxHeight()
+                    .graphicsLayer { alpha = revealFraction },
+                contentAlignment = Alignment.Center
             ) {
-                val isSwipingLeft = runCatching { dismissState.requireOffset() }.getOrDefault(0f) < -0.5f
-                if (isSwipingLeft) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
                     Icon(
-                        Icons.Filled.Delete,
+                        imageVector = Icons.Filled.Delete,
                         contentDescription = "Delete",
-                        tint = Color.White,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(22.dp)
                     )
                 }
             }
-        },
-    ) {
-        HistoryItemCard(
-            item = item,
-            index = index,
-            onOpen = onOpen,
-            onShare = onShare,
-            isSelected = isSelected,
-            isSelectionMode = isSelectionMode,
-            onToggleSelect = onToggleSelect,
-            onLongPress = onLongPress
-        )
+        }
+
+        // Foreground: card that slides left and stays open at -76.dp
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            coroutineScope.launch {
+                                if (offsetX.value < -maxRevealPx * 0.35f) {
+                                    // Move and get stuck with delete icon visible
+                                    offsetX.animateTo(
+                                        -maxRevealPx,
+                                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                                    )
+                                } else {
+                                    // Return to closed
+                                    offsetX.animateTo(
+                                        0f,
+                                        animationSpec = spring(stiffness = Spring.StiffnessMediumLow)
+                                    )
+                                }
+                            }
+                        },
+                        onDragCancel = {
+                            coroutineScope.launch {
+                                offsetX.animateTo(0f)
+                            }
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            val newOffset = (offsetX.value + dragAmount).coerceIn(-maxRevealPx * 1.15f, 0f)
+                            coroutineScope.launch {
+                                offsetX.snapTo(newOffset)
+                            }
+                        }
+                    )
+                }
+        ) {
+            HistoryItemCard(
+                item = item,
+                index = index,
+                onOpen = {
+                    if (isRevealed) {
+                        coroutineScope.launch { offsetX.animateTo(0f) }
+                    } else {
+                        onOpen()
+                    }
+                },
+                onShare = {
+                    if (isRevealed) {
+                        coroutineScope.launch { offsetX.animateTo(0f) }
+                    } else {
+                        onShare()
+                    }
+                },
+                isSelected = isSelected,
+                isSelectionMode = false,
+                onToggleSelect = onToggleSelect,
+                onLongPress = onLongPress,
+                onSelfHeal = onSelfHeal,
+                onInfo = onInfo,
+            )
+        }
     }
 }
 
@@ -405,6 +622,8 @@ private fun HistoryItemCard(
     isSelectionMode: Boolean,
     onToggleSelect: () -> Unit,
     onLongPress: () -> Unit,
+    onSelfHeal: ((Long, String) -> Unit)? = null,
+    onInfo: () -> Unit = {},
 ) {
     val animatableAlpha = remember { Animatable(0f) }
     val animatableTranslationY = remember { Animatable(32f) }
@@ -448,52 +667,31 @@ private fun HistoryItemCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(3.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (isSelectionMode) {
                 Checkbox(
                     checked = isSelected,
                     onCheckedChange = { onToggleSelect() },
-                    modifier = Modifier.padding(end = 8.dp)
+                    modifier = Modifier.padding(start = 6.dp, end = 6.dp)
                 )
             }
 
-            // Thumbnail or file-type icon
-            if (item.thumbnail != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
-                        .data(item.thumbnail)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(8.dp)),
-                    contentScale = ContentScale.Crop,
-                )
-            } else {
-                Box(
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = if (item.isAudio) Icons.Filled.AudioFile
-                                      else Icons.Filled.VideoFile,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(28.dp),
-                    )
-                }
-            }
+            // Thumbnail with persistent local caching & self-healing fallback
+            HistoryThumbnail(
+                item = item,
+                onSelfHeal = onSelfHeal,
+            )
 
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
 
             // Title + metadata
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(vertical = 6.dp, horizontal = 2.dp)
+            ) {
                 Text(
                     text = item.title,
                     style = MaterialTheme.typography.bodyMedium,
@@ -522,6 +720,14 @@ private fun HistoryItemCard(
 
             // Action buttons (only show when not selecting)
             if (!isSelectionMode) {
+                IconButton(onClick = onInfo, modifier = Modifier.size(36.dp)) {
+                    Icon(
+                        Icons.Outlined.Info,
+                        contentDescription = "Details",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 IconButton(onClick = onShare, modifier = Modifier.size(36.dp)) {
                     Icon(
                         Icons.Filled.Share,
@@ -567,19 +773,18 @@ private fun EmptyHistoryState(hasSearch: Boolean) {
 
 // ── File actions ──────────────────────────────────────────────────────────────
 
-private fun openFile(context: Context, item: DownloadedItem) {
+private fun openFile(
+    context: Context,
+    item: DownloadedItem,
+    onPlayInApp: (DownloadedItem) -> Unit
+) {
     val file = File(item.filePath)
     if (!file.exists()) {
         Toast.makeText(context, "File not found", Toast.LENGTH_SHORT).show()
         return
     }
     if (com.waigi.dock.util.PreferenceUtil.preferredPlayer == com.waigi.dock.util.PLAYER_IN_APP) {
-        val intent = Intent(context, com.waigi.dock.PlayerActivity::class.java).apply {
-            putExtra("FILE_PATH", item.filePath)
-            putExtra("TITLE", item.title)
-            putExtra("IS_AUDIO", item.isAudio)
-        }
-        context.startActivity(intent)
+        onPlayInApp(item)
     } else {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.provider", file)
         val mime = if (item.isAudio) "audio/*" else "video/*"
@@ -640,4 +845,119 @@ private fun shareMultipleFiles(context: Context, items: List<DownloadedItem>) {
 private fun formatDate(epochMillis: Long): String {
     val sdf = SimpleDateFormat("MMM d, yyyy", Locale.getDefault())
     return sdf.format(Date(epochMillis))
+}
+
+@Composable
+private fun HistoryThumbnail(
+    item: DownloadedItem,
+    onSelfHeal: ((Long, String) -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    var currentModel by remember(item.id, item.thumbnail, item.filePath) {
+        val localFile = ThumbnailManager.findLocalThumbnail(context, item)
+        val initial: Any? = when {
+            localFile != null -> localFile
+            !item.thumbnail.isNullOrBlank() -> item.thumbnail
+            File(item.filePath).exists() -> File(item.filePath)
+            else -> null
+        }
+        mutableStateOf(initial)
+    }
+
+    var hasFailed by remember(item.id) { mutableStateOf(false) }
+
+    LaunchedEffect(item.id, item.filePath) {
+        if (currentModel == null && File(item.filePath).exists()) {
+            ThumbnailManager.selfHealThumbnail(
+                context = context,
+                scope = coroutineScope,
+                item = item,
+                onHealed = { healedPath ->
+                    currentModel = File(healedPath)
+                    onSelfHeal?.invoke(item.id, healedPath)
+                }
+            )
+        }
+    }
+
+    val shape = RoundedCornerShape(14.dp)
+
+    if (currentModel != null && !hasFailed) {
+        SubcomposeAsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(currentModel)
+                .crossfade(true)
+                .build(),
+            contentDescription = null,
+            modifier = modifier
+                .size(56.dp)
+                .clip(shape),
+            contentScale = ContentScale.Crop,
+            loading = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (item.isAudio) Icons.Filled.AudioFile else Icons.Filled.VideoFile,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+            },
+            error = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = if (item.isAudio) Icons.Filled.AudioFile else Icons.Filled.VideoFile,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
+            },
+            onError = {
+                val mediaFile = File(item.filePath)
+                if (mediaFile.exists() && currentModel != mediaFile) {
+                    ThumbnailManager.selfHealThumbnail(
+                        context = context,
+                        scope = coroutineScope,
+                        item = item,
+                        onHealed = { healedPath ->
+                            currentModel = File(healedPath)
+                            onSelfHeal?.invoke(item.id, healedPath)
+                        }
+                    )
+                } else {
+                    hasFailed = true
+                }
+            }
+        )
+    } else {
+        Box(
+            modifier = modifier
+                .size(56.dp)
+                .clip(shape)
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (item.isAudio) Icons.Filled.AudioFile
+                              else Icons.Filled.VideoFile,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp),
+            )
+        }
+    }
 }

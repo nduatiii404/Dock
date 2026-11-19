@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class HomeUiState(
@@ -31,22 +32,39 @@ data class HomeUiState(
     val showPlaylistPrompt: Boolean = false,
     val downloadSubtitles: Boolean = false,
     val selectedSubtitleLang: String = "",
+    val currentTaskId: String? = null,
+    val isBannerDismissed: Boolean = false,
+    val lastFetchedUrl: String? = null,
 )
 
 class HomeViewModel : ViewModel() {
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
+    private var fetchJob: kotlinx.coroutines.Job? = null
 
     // ── URL input ─────────────────────────────────────────────────────────────
 
     fun onUrlChanged(url: String) {
-        _uiState.update { it.copy(url = url, error = null, videoInfo = null) }
+        _uiState.update { current ->
+            val isSameAsLast = current.lastFetchedUrl != null && url.trim() == current.lastFetchedUrl
+            current.copy(
+                url = url,
+                error = null,
+                videoInfo = if (isSameAsLast) current.videoInfo else null,
+            )
+        }
     }
 
     fun onUrlCleared() {
         _uiState.update {
-            it.copy(url = "", error = null, videoInfo = null, showFormatSheet = false)
+            it.copy(
+                url = "",
+                error = null,
+                videoInfo = null,
+                showFormatSheet = false,
+                lastFetchedUrl = null,
+            )
         }
     }
 
@@ -60,11 +78,29 @@ class HomeViewModel : ViewModel() {
 
     // ── Info fetching ─────────────────────────────────────────────────────────
 
+    fun cancelFetchInfo() {
+        fetchJob?.cancel()
+        fetchJob = null
+        _uiState.update { it.copy(isLoadingInfo = false) }
+    }
+
+    fun openFormatSheet() {
+        if (_uiState.value.videoInfo != null) {
+            _uiState.update { it.copy(showFormatSheet = true) }
+        }
+    }
+
     fun fetchInfo(url: String = _uiState.value.url) {
         if (url.isBlank()) return
-        viewModelScope.launch {
-            _uiState.update { it.copy(isLoadingInfo = true, error = null, videoInfo = null) }
+        fetchJob?.cancel()
+        fetchJob = viewModelScope.launch {
+            _uiState.update { it.copy(isLoadingInfo = true, error = null) }
             val trimmedUrl = url.trim()
+
+            // Allow the UI split spring animation to complete smoothly at 60/120fps before spawning engine
+            kotlinx.coroutines.delay(260)
+            if (!isActive) return@launch
+
             val isPlaylistUrl = trimmedUrl.contains("list=") || trimmedUrl.contains("/sets/") || trimmedUrl.contains("/playlist")
 
             if (isPlaylistUrl) {
@@ -109,6 +145,8 @@ class HomeViewModel : ViewModel() {
                             showPlaylistPrompt = false,
                             downloadSubtitles = false,
                             selectedSubtitleLang = defaultSub,
+                            isBannerDismissed = false,
+                            lastFetchedUrl = trimmedUrl,
                         )
                     }
                 },
@@ -152,6 +190,8 @@ class HomeViewModel : ViewModel() {
                 downloadStarted = true,
                 url = "",
                 playlistEntries = null,
+                videoInfo = null,
+                lastFetchedUrl = null,
             )
         }
     }
@@ -163,8 +203,11 @@ class HomeViewModel : ViewModel() {
     fun fetchSingleVideoFromPlaylist() {
         val url = _uiState.value.url.trim()
         _uiState.update { it.copy(showPlaylistPrompt = false) }
-        viewModelScope.launch {
+        fetchJob?.cancel()
+        fetchJob = viewModelScope.launch {
             _uiState.update { it.copy(isLoadingInfo = true, error = null, videoInfo = null) }
+            kotlinx.coroutines.delay(260)
+            if (!isActive) return@launch
             val result = DownloadUtil.fetchVideoInfo(
                 url = url,
                 preferences = DownloadPreferences.createFromPreferences().copy(downloadPlaylist = false),
@@ -176,6 +219,7 @@ class HomeViewModel : ViewModel() {
                             isLoadingInfo = false,
                             videoInfo = info,
                             showFormatSheet = true,
+                            lastFetchedUrl = url,
                         )
                     }
                 },
@@ -215,12 +259,12 @@ class HomeViewModel : ViewModel() {
 
     // ── Download ──────────────────────────────────────────────────────────────
 
-    fun startDownload(context: Context) {
+    fun startDownload(context: Context, customPrefs: DownloadPreferences? = null) {
         val state = _uiState.value
         val url = state.url.trim()
         if (url.isBlank()) return
 
-        val prefs = DownloadPreferences.createFromPreferences().copy(
+        val prefs = customPrefs ?: DownloadPreferences.createFromPreferences().copy(
             extractAudio = state.selectedAudio,
             videoQuality = state.selectedQuality,
             writeSubtitle = state.downloadSubtitles,
@@ -228,16 +272,24 @@ class HomeViewModel : ViewModel() {
             subtitleLanguage = state.selectedSubtitleLang,
         )
 
-        DownloadService.startDownload(context, url, prefs)
+        val taskId = java.util.UUID.randomUUID().toString()
+        DownloadService.startDownload(context, url, prefs, taskId = taskId)
 
         _uiState.update {
             it.copy(
                 showFormatSheet = false,
                 downloadStarted = true,
+                currentTaskId = taskId,
+                isBannerDismissed = false,
                 url = "",
                 videoInfo = null,
+                lastFetchedUrl = null,
             )
         }
+    }
+
+    fun dismissThumbnailBanner() {
+        _uiState.update { it.copy(isBannerDismissed = true) }
     }
 
     fun onDownloadStartedAcknowledged() {

@@ -2,13 +2,26 @@ package com.waigi.dock.ui.screen
 
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.core.tween
+import com.waigi.dock.download.Downloader
+import com.waigi.dock.ui.components.DownloadThumbnailBanner
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -21,6 +34,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +53,7 @@ import androidx.compose.material.icons.filled.VideoFile
 import androidx.compose.material.icons.outlined.ArrowDownward
 import androidx.compose.material.icons.outlined.AudioFile
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.VideoFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -137,6 +152,12 @@ fun HomeScreen(
         }
     }
 
+    val tasks by Downloader.tasks.collectAsState()
+    val activeTask = remember(tasks, uiState.currentTaskId) {
+        uiState.currentTaskId?.let { tasks[it] } ?: tasks.values.lastOrNull { !it.state.isTerminal }
+    }
+    val isBannerVisible = !uiState.isBannerDismissed && (uiState.videoInfo != null || activeTask != null)
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background,
@@ -144,11 +165,49 @@ fun HomeScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
+                .padding(padding)
+                .animateContentSize(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioLowBouncy,
+                        stiffness = Spring.StiffnessLow
+                    )
+                ),
         ) {
             // ── Animated gradient header ──────────────────────────────────────
             val showGradient by com.waigi.dock.util.PreferenceUtil.showGradientHeaderFlow.collectAsState()
-            DockHeader(showGradient = showGradient)
+            DockHeader(showGradient = showGradient, isCompact = isBannerVisible)
+
+            // ── Large Thumbnail Banner Preview ────────────────────────────────
+            AnimatedVisibility(
+                visible = isBannerVisible,
+                enter = expandVertically(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioLowBouncy,
+                        stiffness = Spring.StiffnessLow
+                    )
+                ) + fadeIn(
+                    animationSpec = tween(durationMillis = 200)
+                ),
+                exit = shrinkVertically(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMediumLow
+                    )
+                ) + fadeOut(
+                    animationSpec = tween(durationMillis = 150)
+                ),
+            ) {
+                DownloadThumbnailBanner(
+                    videoInfo = uiState.videoInfo,
+                    task = activeTask,
+                    selectedQuality = uiState.selectedQuality,
+                    selectedAudio = uiState.selectedAudio,
+                    onPause = Downloader::pause,
+                    onResume = Downloader::resume,
+                    onCancel = Downloader::cancel,
+                    onDismiss = viewModel::dismissThumbnailBanner,
+                )
+            }
 
             // ── URL Input card ────────────────────────────────────────────────
             Column(
@@ -201,34 +260,151 @@ fun HomeScreen(
                     )
                 }
 
-                // Fetch / loading button
-                Button(
-                    onClick = {
-                        keyboardController?.hide()
-                        viewModel.fetchInfo()
-                    },
-                    enabled = uiState.url.isNotBlank() && !uiState.isLoadingInfo,
+                // ── Action Buttons Row with Bouncy Morphing Split Animation ────
+                val canReopenSheet = uiState.videoInfo != null &&
+                    uiState.url.trim().isNotEmpty() &&
+                    uiState.url.trim() == uiState.lastFetchedUrl
+
+                val splitProgress by animateFloatAsState(
+                    targetValue = if (uiState.isLoadingInfo) 1f else 0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioLowBouncy,
+                        stiffness = Spring.StiffnessLow
+                    ),
+                    label = "splitProgress"
+                )
+
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                    ),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    if (uiState.isLoadingInfo) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                            strokeCap = StrokeCap.Round,
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("Fetching info…", color = Color.White)
-                    } else {
-                        Icon(Icons.Outlined.ArrowDownward, contentDescription = null)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Get Download Options", style = MaterialTheme.typography.labelLarge)
+                    // Main Action / Fetching Button
+                    Button(
+                        onClick = {
+                            keyboardController?.hide()
+                            if (canReopenSheet) {
+                                viewModel.openFormatSheet()
+                            } else {
+                                viewModel.fetchInfo()
+                            }
+                        },
+                        enabled = uiState.url.isNotBlank() && !uiState.isLoadingInfo,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                        ),
+                        contentPadding = PaddingValues(horizontal = 14.dp),
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            // 1. Fetching State: fades in smoothly as split reaches open width
+                            val fetchingAlpha = ((splitProgress - 0.35f) / 0.65f).coerceIn(0f, 1f)
+                            if (fetchingAlpha > 0f) {
+                                Row(
+                                    modifier = Modifier.alpha(fetchingAlpha),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = Color.White,
+                                        strokeWidth = 2.dp,
+                                        strokeCap = StrokeCap.Round,
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        text = "Fetching info…",
+                                        color = Color.White,
+                                        style = MaterialTheme.typography.labelLarge,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
+                                }
+                            }
+
+                            // 2. Action State: fades in smoothly as button closes back to full width
+                            val normalAlpha = ((0.55f - splitProgress) / 0.55f).coerceIn(0f, 1f)
+                            if (normalAlpha > 0f) {
+                                Row(
+                                    modifier = Modifier.alpha(normalAlpha),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    if (canReopenSheet) {
+                                        Icon(Icons.Outlined.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Show Download Options",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                        )
+                                    } else {
+                                        Icon(Icons.Outlined.ArrowDownward, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Get Download Options",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            maxLines = 1,
+                                            softWrap = false,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Fluid Animated Gap & Cancel Button
+                    if (splitProgress > 0.001f) {
+                        Spacer(modifier = Modifier.width((8 * splitProgress).dp))
+
+                        Box(
+                            modifier = Modifier
+                                .width((100 * splitProgress).dp)
+                                .fillMaxHeight()
+                                .clipToBounds()
+                                .alpha(splitProgress.coerceIn(0f, 1f))
+                        ) {
+                            Button(
+                                onClick = viewModel::cancelFetchInfo,
+                                modifier = Modifier.fillMaxSize(),
+                                shape = RoundedCornerShape(14.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = MaterialTheme.colorScheme.onSurface,
+                                ),
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                                elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Icon(
+                                        painter = painterResource(id = com.waigi.dock.R.drawable.lucide_ic_x),
+                                        contentDescription = "Cancel",
+                                        modifier = Modifier.size(16.dp),
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Cancel",
+                                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -238,19 +414,18 @@ fun HomeScreen(
         }
 
         // ── Format picker bottom sheet ────────────────────────────────────────
-        if (uiState.showFormatSheet) {
-            FormatPickerSheet(
+        if (uiState.showFormatSheet && uiState.videoInfo != null) {
+            com.waigi.dock.ui.components.DownloadOptionsDialog(
+                url = uiState.url,
                 videoInfo = uiState.videoInfo,
-                isAudio = uiState.selectedAudio,
-                selectedQuality = uiState.selectedQuality,
-                downloadSubtitles = uiState.downloadSubtitles,
-                selectedSubtitleLang = uiState.selectedSubtitleLang,
-                onAudioToggle = viewModel::onAudioSelected,
-                onQualitySelected = viewModel::onQualitySelected,
-                onSubtitleToggle = viewModel::onSubtitleToggle,
-                onSubtitleLangSelected = viewModel::onSubtitleLangSelected,
-                onDownload = { viewModel.startDownload(context) },
                 onDismiss = viewModel::onDismissFormatSheet,
+                onDownload = { _, prefs ->
+                    viewModel.onAudioSelected(prefs.extractAudio)
+                    viewModel.onQualitySelected(prefs.videoQuality)
+                    viewModel.onSubtitleToggle(prefs.writeSubtitle)
+                    viewModel.onSubtitleLangSelected(prefs.subtitleLanguage)
+                    viewModel.startDownload(context, prefs)
+                }
             )
         }
 
@@ -298,14 +473,30 @@ fun HomeScreen(
 // ── Header ────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun DockHeader(showGradient: Boolean) {
+private fun DockHeader(showGradient: Boolean, isCompact: Boolean = false) {
     if (showGradient) {
-        // Vibrant mesh gradient header with absolute premium design
+        val headerHeight by animateDpAsState(
+            targetValue = if (isCompact) 64.dp else 140.dp,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioLowBouncy,
+                stiffness = Spring.StiffnessLow
+            ),
+            label = "gradientHeaderHeight"
+        )
+        val verticalPadding by animateDpAsState(
+            targetValue = if (isCompact) 6.dp else 12.dp,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioLowBouncy,
+                stiffness = Spring.StiffnessLow
+            ),
+            label = "gradientHeaderPadding"
+        )
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(140.dp)
-                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .height(headerHeight)
+                .padding(horizontal = 16.dp, vertical = verticalPadding)
                 .background(
                     brush = Brush.linearGradient(
                         colors = listOf(
@@ -314,37 +505,49 @@ private fun DockHeader(showGradient: Boolean) {
                             Color(0xFF00BCD4)  // Teal
                         )
                     ),
-                    shape = RoundedCornerShape(24.dp)
+                    shape = RoundedCornerShape(20.dp)
                 )
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .padding(horizontal = 16.dp, vertical = if (isCompact) 8.dp else 12.dp),
+                verticalArrangement = if (isCompact) Arrangement.Center else Arrangement.Top
             ) {
                 Row(
-                    modifier = Modifier.height(48.dp),
+                    modifier = Modifier.height(if (isCompact) 36.dp else 48.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
                         painter = painterResource(id = com.waigi.dock.R.drawable.ic_logo),
                         contentDescription = null,
                         tint = Color.White,
-                        modifier = Modifier.size(24.dp),
+                        modifier = Modifier.size(if (isCompact) 22.dp else 24.dp),
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Dock",
-                        style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                        style = if (isCompact) MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                                else MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
                         color = Color.White,
                     )
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Stash your streams, zero strings attached",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.8f),
-                )
+                AnimatedVisibility(
+                    visible = !isCompact,
+                    enter = fadeIn(tween(150)) + expandVertically(spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow)),
+                    exit = fadeOut(tween(100)) + shrinkVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)),
+                ) {
+                    Column {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Stash your streams, zero strings attached",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
         }
     } else {
@@ -492,295 +695,4 @@ private fun PlatformChip(name: String) {
     }
 }
 
-// ── Format Picker Bottom Sheet ────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FormatPickerSheet(
-    videoInfo: com.waigi.dock.util.VideoInfo?,
-    isAudio: Boolean,
-    selectedQuality: Int,
-    downloadSubtitles: Boolean,
-    selectedSubtitleLang: String,
-    onAudioToggle: (Boolean) -> Unit,
-    onQualitySelected: (Int) -> Unit,
-    onSubtitleToggle: (Boolean) -> Unit,
-    onSubtitleLangSelected: (String) -> Unit,
-    onDownload: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp)
-                .padding(bottom = 32.dp),
-        ) {
-            // Title + thumbnail
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top,
-            ) {
-                if (videoInfo?.thumbnail != null) {
-                    AsyncImage(
-                        model = videoInfo.thumbnail,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(RoundedCornerShape(10.dp)),
-                        contentScale = ContentScale.Crop,
-                    )
-                    Spacer(modifier = Modifier.width(14.dp))
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = videoInfo?.title ?: "Ready to download",
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (videoInfo?.uploader != null) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = videoInfo.uploader,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(24.dp))
-            HorizontalDivider()
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // ── Format selector: Video / Audio ────────────────────────────────
-            Text(
-                text = "Format",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                FilterChip(
-                    selected = !isAudio,
-                    onClick = { onAudioToggle(false) },
-                    label = { Text("Video") },
-                    leadingIcon = {
-                        Icon(
-                            if (!isAudio) Icons.Filled.VideoFile else Icons.Outlined.VideoFile,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                        selectedLabelColor = MaterialTheme.colorScheme.primary,
-                        selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
-                    ),
-                )
-                FilterChip(
-                    selected = isAudio,
-                    onClick = { onAudioToggle(true) },
-                    label = { Text("Audio only") },
-                    leadingIcon = {
-                        Icon(
-                            if (isAudio) Icons.Filled.AudioFile else Icons.Outlined.AudioFile,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                        selectedLabelColor = MaterialTheme.colorScheme.primary,
-                        selectedLeadingIconColor = MaterialTheme.colorScheme.primary,
-                    ),
-                )
-            }
-
-            // ── Quality selector (video only) ─────────────────────────────────
-            AnimatedVisibility(visible = !isAudio) {
-                Column {
-                    Spacer(modifier = Modifier.height(20.dp))
-                    Text(
-                        text = "Quality",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    val availableQualities = remember(videoInfo) {
-                        val heights = videoInfo?.formats
-                            ?.filter { it.vcodec != "none" && it.height != null && it.height > 0.0 }
-                            ?.mapNotNull { it.height?.toInt() }
-                            ?.toSet() ?: emptySet()
-
-                        if (heights.isEmpty()) {
-                            listOf(
-                                0 to "Best",
-                                1 to "1080p",
-                                2 to "720p",
-                                3 to "480p",
-                                4 to "360p"
-                            )
-                        } else {
-                            val list = mutableListOf<Pair<Int, String>>()
-                            list.add(0 to "Best")
-                            if (heights.any { it >= 2160 }) list.add(5 to "2160p (4K)")
-                            if (heights.any { it in 1440..2159 }) list.add(6 to "1440p (2K)")
-                            if (heights.any { it in 1080..1439 }) list.add(1 to "1080p")
-                            if (heights.any { it in 720..1079 }) list.add(2 to "720p")
-                            if (heights.any { it in 480..719 }) list.add(3 to "480p")
-                            if (heights.any { it in 1..479 }) list.add(4 to "360p")
-                            list
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        availableQualities.forEach { (value, label) ->
-                            FilterChip(
-                                selected = selectedQuality == value,
-                                onClick = { onQualitySelected(value) },
-                                label = { Text(label) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                    selectedLabelColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ── Subtitle selector (video only, if subtitles available) ────────
-            AnimatedVisibility(visible = !isAudio) {
-                val subtitleLanguages = remember(videoInfo) {
-                    val map = mutableMapOf<String, String>() // code -> name
-                    videoInfo?.subtitles?.forEach { (code, list) ->
-                        val name = list.firstOrNull()?.name ?: code
-                        map[code] = name
-                    }
-                    videoInfo?.automatic_captions?.forEach { (code, list) ->
-                        val name = (list.firstOrNull()?.name ?: code) + " (auto)"
-                        if (!map.containsKey(code)) {
-                            map[code] = name
-                        }
-                    }
-                    map.toList().sortedBy { it.second }
-                }
-
-                if (subtitleLanguages.isNotEmpty()) {
-                    Column {
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Text(
-                            text = "Subtitles",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Checkbox(
-                                checked = downloadSubtitles,
-                                onCheckedChange = onSubtitleToggle,
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "Download subtitles",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
-
-                        if (downloadSubtitles) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            var subtitleExpanded by remember { mutableStateOf(false) }
-                            val currentLangName = subtitleLanguages.firstOrNull { it.first == selectedSubtitleLang }?.second ?: selectedSubtitleLang
-
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                                    .clickable { subtitleExpanded = true }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = currentLangName.ifEmpty { "Select language" },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                    )
-                                    Icon(
-                                        imageVector = Icons.Default.ArrowDropDown,
-                                        contentDescription = null
-                                    )
-                                }
-
-                                DropdownMenu(
-                                    expanded = subtitleExpanded,
-                                    onDismissRequest = { subtitleExpanded = false },
-                                    modifier = Modifier.fillMaxWidth(0.8f)
-                                ) {
-                                    subtitleLanguages.forEach { (code, name) ->
-                                        DropdownMenuItem(
-                                            text = { Text(name) },
-                                            onClick = {
-                                                onSubtitleLangSelected(code)
-                                                subtitleExpanded = false
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(28.dp))
-
-            // ── Download button ───────────────────────────────────────────────
-            Button(
-                onClick = onDownload,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                ),
-            ) {
-                Icon(Icons.Filled.Download, contentDescription = null)
-                Spacer(modifier = Modifier.width(10.dp))
-                Text(
-                    text = if (isAudio) "Download Audio" else "Download Video",
-                    style = MaterialTheme.typography.labelLarge,
-                )
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            TextButton(
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}

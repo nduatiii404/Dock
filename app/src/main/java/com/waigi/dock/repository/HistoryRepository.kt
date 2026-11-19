@@ -20,6 +20,9 @@ class HistoryRepository(private val dao: HistoryDao) {
     /** Save a completed download to history. */
     suspend fun save(item: DownloadedItem): Long = dao.insert(item)
 
+    /** Update thumbnail path for a specific item. */
+    suspend fun updateThumbnail(id: Long, thumbnail: String) = dao.updateThumbnail(id, thumbnail)
+
     /** Remove a single item. */
     suspend fun delete(item: DownloadedItem) = dao.delete(item)
 

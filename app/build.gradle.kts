@@ -27,7 +27,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -122,6 +123,7 @@ dependencies {
 
     // ── Image Loading ─────────────────────────────────────────────────────────
     implementation(libs.coil.compose)
+    implementation(libs.coil.video)
 
     // ── Networking ────────────────────────────────────────────────────────────
     implementation(libs.okhttp)
@@ -141,6 +143,8 @@ dependencies {
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.session)
+    implementation(libs.androidx.media3.datasource)
+    implementation(libs.androidx.media3.database)
 
     // ── Samsung One UI Icons ──────────────────────────────────────────────────
     implementation(libs.oneui.icons)

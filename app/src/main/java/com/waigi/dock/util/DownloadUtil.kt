@@ -1,5 +1,6 @@
 package com.waigi.dock.util
 
+import android.net.Uri
 import android.util.Log
 import com.waigi.dock.util.FileUtil.audioDownloadDir
 import com.waigi.dock.util.FileUtil.getArchiveFile
@@ -50,6 +51,25 @@ data class VideoInfo(
     val subtitles: Map<String, List<SubtitleInfo>>? = null,
     val automatic_captions: Map<String, List<SubtitleInfo>>? = null,
 )
+
+/** Formats a given URL / extractor into a clean, human-readable platform name (e.g. youtu.be -> YouTube). */
+fun formatSourcePlatform(url: String?, extractor: String? = null): String {
+    val host = runCatching { Uri.parse(url.orEmpty()).host?.removePrefix("www.").orEmpty() }.getOrDefault("")
+    val ext = extractor?.lowercase().orEmpty()
+    return when {
+        ext.contains("youtube") || host.contains("youtube", ignoreCase = true) || host.contains("youtu.be", ignoreCase = true) -> "YouTube"
+        ext.contains("tiktok") || host.contains("tiktok", ignoreCase = true) -> "TikTok"
+        ext.contains("instagram") || host.contains("instagram", ignoreCase = true) -> "Instagram"
+        ext.contains("twitter") || host.contains("twitter", ignoreCase = true) || host.contains("x.com", ignoreCase = true) -> "X (Twitter)"
+        ext.contains("facebook") || host.contains("facebook", ignoreCase = true) || host.contains("fb.watch", ignoreCase = true) -> "Facebook"
+        ext.contains("reddit") || host.contains("reddit", ignoreCase = true) -> "Reddit"
+        ext.contains("pinterest") || host.contains("pinterest", ignoreCase = true) || host.contains("pin.it", ignoreCase = true) -> "Pinterest"
+        ext.contains("vimeo") || host.contains("vimeo", ignoreCase = true) -> "Vimeo"
+        ext.isNotEmpty() -> ext.replaceFirstChar { it.uppercase() }
+        host.isNotEmpty() -> host
+        else -> "Web"
+    }
+}
 
 @Serializable
 data class PlaylistResult(
@@ -182,6 +202,10 @@ data class DownloadPreferences(
  */
 object DownloadUtil {
 
+    private fun ensureEngineInitialized() {
+        YoutubeDLUpdater.ensureInitialized(com.waigi.dock.DockApp.instance)
+    }
+
     /**
      * Fetch metadata (title, thumbnail, formats, subtitles) for a URL
      * without downloading anything.
@@ -193,6 +217,7 @@ object DownloadUtil {
         taskKey: String? = null,
     ): Result<VideoInfo> = withContext(Dispatchers.IO) {
         runCatching {
+            ensureEngineInitialized()
             val request = YoutubeDLRequest(url).apply {
                 addOption("-o", BASENAME)
                 addOption("-R", "3")
@@ -235,6 +260,7 @@ object DownloadUtil {
         preferences: DownloadPreferences = DownloadPreferences.createFromPreferences(),
     ): Result<PlaylistResult> = withContext(Dispatchers.IO) {
         runCatching {
+            ensureEngineInitialized()
             val request = YoutubeDLRequest(url).apply {
                 addOption("--flat-playlist")
                 addOption("--dump-single-json")
@@ -273,6 +299,7 @@ object DownloadUtil {
         progressCallback: ((Float, Long, String) -> Unit)? = null,
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
+            ensureEngineInitialized()
             val outputDir = if (preferences.extractAudio) audioDownloadDir else videoDownloadDir
             
             val finalTitle = if (!title.isNullOrBlank()) {
@@ -320,6 +347,10 @@ object DownloadUtil {
                         applyVideoQuality(preferences.videoQuality)
                     }
                     if (preferences.embedThumbnail) addOption("--embed-thumbnail")
+                    val mergeFormat = if (preferences.videoFormat.isNotEmpty() && !preferences.videoFormat.contains("+")) {
+                        preferences.videoFormat
+                    } else "mp4"
+                    addOption("--merge-output-format", mergeFormat)
                 }
 
                 // ── Metadata & chapters ───────────────────────────────────

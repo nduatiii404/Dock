@@ -1,6 +1,7 @@
 package com.waigi.dock.util
 
 import android.content.Context
+import android.os.Build
 import android.util.Log
 import com.tencent.mmkv.MMKV
 import com.yausername.aria2c.Aria2c
@@ -12,6 +13,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
+import java.util.zip.ZipFile
 
 private const val TAG = "YoutubeDLUpdater"
 
@@ -38,21 +42,139 @@ object YoutubeDLUpdater {
     private val _ytDlpVersion = MutableStateFlow("unknown")
     val ytDlpVersion: StateFlow<String> = _ytDlpVersion.asStateFlow()
 
+    @Volatile
+    private var isInitialized = false
+
+    @Volatile
+    var lastInitError: Throwable? = null
+        private set
+
+    /**
+     * Check if yt-dlp is initialized; if not, initialize it immediately.
+     * Throws an informative exception if initialization fails so callers
+     * never execute against an uninitialized singleton.
+     */
+    @Synchronized
+    fun ensureInitialized(context: Context): Boolean {
+        if (isInitialized) return true
+        init(context)
+        if (!isInitialized) {
+            val cause = lastInitError
+            val msg = cause?.localizedMessage ?: cause?.message ?: "unknown native initialization failure"
+            throw IllegalStateException("yt-dlp engine failed to initialize: $msg", cause)
+        }
+        return true
+    }
+
+    /**
+     * Ensures all required native libraries (.so and .zip.so) exist in
+     * nativeLibraryDir. If missing on disk (common in Android 10+ / split APK installs),
+     * automatically extracts them from the APK into internal storage.
+     */
+    private fun ensureNativeLibraries(appContext: Context) {
+        val currentLibDir = File(appContext.applicationInfo.nativeLibraryDir)
+        val pythonZip = File(currentLibDir, "libpython.zip.so")
+        val pythonSo = File(currentLibDir, "libpython.so")
+
+        if (pythonZip.exists() && pythonZip.length() > 0 && pythonSo.exists()) {
+            // Already present and non-empty in nativeLibraryDir
+            return
+        }
+
+        Log.w(TAG, "Native libs missing from ${currentLibDir.absolutePath}. Attempting fallback extraction from APK…")
+        try {
+            val apkPath = appContext.applicationInfo.sourceDir ?: appContext.packageCodePath
+            val apkFile = File(apkPath)
+            if (!apkFile.exists() || !apkFile.canRead()) {
+                Log.e(TAG, "Cannot read source APK at $apkPath for native extraction")
+                return
+            }
+
+            val fallbackDir = File(appContext.filesDir, "youtubedl-bin")
+            if (!fallbackDir.exists()) fallbackDir.mkdirs()
+
+            ZipFile(apkFile).use { zip ->
+                val supportedAbis = Build.SUPPORTED_ABIS ?: arrayOf("arm64-v8a", "armeabi-v7a")
+                var selectedAbi: String? = null
+
+                for (abi in supportedAbis) {
+                    val sample = zip.getEntry("lib/$abi/libpython.zip.so")
+                    if (sample != null) {
+                        selectedAbi = abi
+                        break
+                    }
+                }
+
+                if (selectedAbi == null) {
+                    // Try any ABI prefix present
+                    selectedAbi = zip.entries().asSequence()
+                        .mapNotNull { it.name }
+                        .filter { it.startsWith("lib/") && it.contains("libpython.zip.so") }
+                        .map { it.split("/")[1] }
+                        .firstOrNull()
+                }
+
+                if (selectedAbi != null) {
+                    Log.i(TAG, "Extracting native libraries for ABI: $selectedAbi to ${fallbackDir.absolutePath}")
+                    val prefix = "lib/$selectedAbi/"
+                    val entries = zip.entries()
+                    while (entries.hasMoreElements()) {
+                        val entry = entries.nextElement()
+                        if (entry.name.startsWith(prefix) && !entry.isDirectory) {
+                            val fileName = entry.name.removePrefix(prefix)
+                            val targetFile = File(fallbackDir, fileName)
+                            if (!targetFile.exists() || targetFile.length() != entry.size) {
+                                zip.getInputStream(entry).use { input ->
+                                    FileOutputStream(targetFile).use { output ->
+                                        input.copyTo(output)
+                                    }
+                                }
+                                targetFile.setExecutable(true, false)
+                                targetFile.setReadable(true, false)
+                            }
+                        }
+                    }
+                    // Redirect nativeLibraryDir to the extracted directory
+                    appContext.applicationInfo.nativeLibraryDir = fallbackDir.absolutePath
+                    Log.i(TAG, "Native library directory redirected to: ${fallbackDir.absolutePath}")
+                }
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed during fallback native extraction", t)
+        }
+    }
+
     /**
      * Initialize yt-dlp, ffmpeg, and aria2c.
      * Must be called before any download operations.
      */
+    @Synchronized
     fun init(context: Context) {
+        if (isInitialized) return
+        val appContext = context.applicationContext ?: context
         try {
-            YoutubeDL.getInstance().init(context)
-            FFmpeg.getInstance().init(context)
-            Aria2c.getInstance().init(context)
-            _ytDlpVersion.value = YoutubeDL.getInstance().version(context) ?: "unknown"
-            Log.i(TAG, "yt-dlp initialized. Version: ${_ytDlpVersion.value}")
+            ensureNativeLibraries(appContext)
+            YoutubeDL.getInstance().init(appContext)
+            try {
+                FFmpeg.getInstance().init(appContext)
+            } catch (t: Throwable) {
+                Log.w(TAG, "FFmpeg init warning: ${t.message}")
+            }
+            try {
+                Aria2c.getInstance().init(appContext)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Aria2c init warning: ${t.message}")
+            }
+            _ytDlpVersion.value = YoutubeDL.getInstance().version(appContext) ?: "unknown"
+            isInitialized = true
+            lastInitError = null
+            Log.i(TAG, "yt-dlp initialized successfully. Version: ${_ytDlpVersion.value}")
         } catch (e: YoutubeDLException) {
+            lastInitError = e
             Log.e(TAG, "Failed to initialize yt-dlp", e)
-        } catch (e: Exception) {
-            Log.e(TAG, "Unexpected error during yt-dlp init", e)
+        } catch (t: Throwable) {
+            lastInitError = t
+            Log.e(TAG, "Unexpected error during yt-dlp init", t)
         }
     }
 

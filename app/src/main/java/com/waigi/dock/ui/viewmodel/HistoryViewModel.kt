@@ -48,6 +48,12 @@ class HistoryViewModel(
         viewModelScope.launch { repository.delete(item) }
     }
 
+    fun updateThumbnail(id: Long, thumbnailPath: String) {
+        viewModelScope.launch {
+            repository.updateThumbnail(id, thumbnailPath)
+        }
+    }
+
     fun showDeleteAllDialog() {
         _uiState.update { it.copy(isDeleteAllDialogVisible = true) }
     }

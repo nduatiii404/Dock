@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -133,15 +134,33 @@ private fun DownloadTaskCard(task: com.waigi.dock.download.DownloadTask) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    LinearProgressIndicator(modifier = Modifier.fillMaxSize())
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                is TaskState.Merging -> {
+                    val partPrefix = if (task.totalParts > 1) "Part ${task.totalParts}/${task.totalParts} · " else ""
+                    Text(
+                        text = "${partPrefix}Merging parts into final file…",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { Downloader.cancel(task.id) }) {
+                            Text("Cancel", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
                 is TaskState.Downloading -> {
+                    val partPrefix = if (task.totalParts > 1 && task.currentPart > 0) "Part ${task.currentPart}/${task.totalParts} · " else ""
                     val sizeText = if (task.totalSize.isNotEmpty()) {
                         val downloaded = com.waigi.dock.download.Downloader.calculateDownloadedSize(task.totalSize, state.progress)
                         if (downloaded.isNotEmpty()) "$downloaded / ${task.totalSize} · " else "${task.totalSize} · "
                     } else ""
                     Text(
                         text = buildString {
+                            append(partPrefix)
                             append(sizeText)
                             append("${state.progress.toInt()}%")
                             if (state.speedText.isNotEmpty()) append(" · ${state.speedText}")
@@ -153,7 +172,7 @@ private fun DownloadTaskCard(task: com.waigi.dock.download.DownloadTask) {
                     Spacer(modifier = Modifier.height(8.dp))
                     LinearProgressIndicator(
                         progress = { state.progress / 100f },
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxWidth(),
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -166,19 +185,20 @@ private fun DownloadTaskCard(task: com.waigi.dock.download.DownloadTask) {
                     }
                 }
                 is TaskState.Paused -> {
+                    val partPrefix = if (task.totalParts > 1 && task.currentPart > 0) "Part ${task.currentPart}/${task.totalParts} · " else ""
                     val sizeText = if (task.totalSize.isNotEmpty()) {
                         val downloaded = com.waigi.dock.download.Downloader.calculateDownloadedSize(task.totalSize, state.progress)
                         if (downloaded.isNotEmpty()) "$downloaded / ${task.totalSize} · " else "${task.totalSize} · "
                     } else ""
                     Text(
-                        text = "${sizeText}Paused · ${state.progress.toInt()}%",
+                        text = "${partPrefix}${sizeText}Paused · ${state.progress.toInt()}%",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     LinearProgressIndicator(
                         progress = { state.progress / 100f },
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxWidth(),
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     )
                     Spacer(modifier = Modifier.height(8.dp))
