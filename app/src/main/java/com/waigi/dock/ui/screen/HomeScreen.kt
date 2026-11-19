@@ -1,7 +1,9 @@
 package com.waigi.dock.ui.screen
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
@@ -508,36 +510,78 @@ private fun DockHeader(showGradient: Boolean, isCompact: Boolean = false) {
                     shape = RoundedCornerShape(20.dp)
                 )
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = if (isCompact) 8.dp else 12.dp),
-                verticalArrangement = if (isCompact) Arrangement.Center else Arrangement.Top
-            ) {
-                Row(
-                    modifier = Modifier.height(if (isCompact) 36.dp else 48.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        painter = painterResource(id = com.waigi.dock.R.drawable.ic_logo),
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(if (isCompact) 22.dp else 24.dp),
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Dock",
-                        style = if (isCompact) MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
-                                else MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
-                        color = Color.White,
-                    )
-                }
-                AnimatedVisibility(
-                    visible = !isCompact,
-                    enter = fadeIn(tween(150)) + expandVertically(spring(dampingRatio = Spring.DampingRatioLowBouncy, stiffness = Spring.StiffnessLow)),
-                    exit = fadeOut(tween(100)) + shrinkVertically(spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = Spring.StiffnessMediumLow)),
-                ) {
-                    Column {
+            // AnimatedContent crossfades between compact (inline Row) and expanded (Column) layouts.
+            // The subtitle slides + fades: out downward when compacting, in upward when expanding.
+            AnimatedContent(
+                targetState = isCompact,
+                transitionSpec = {
+                    if (targetState) {
+                        // expanding → compact: new content (inline row) fades+slides in from above
+                        (fadeIn(tween(280)) + slideInVertically { -it / 5 })
+                            .togetherWith(fadeOut(tween(200)) + slideOutVertically { it / 5 })
+                    } else {
+                        // compact → expanding: new content (column) fades+slides in from below
+                        (fadeIn(tween(280)) + slideInVertically { it / 5 })
+                            .togetherWith(fadeOut(tween(200)) + slideOutVertically { -it / 5 })
+                    }
+                },
+                label = "dockHeaderContent"
+            ) { compact ->
+                if (compact) {
+                    // Compact: single Row — icon + "Dock" + subtitle all on one line, no clipping
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            painter = painterResource(id = com.waigi.dock.R.drawable.ic_logo),
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp),
+                        )
+                        Text(
+                            text = "Dock",
+                            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                            color = Color.White,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = "·  Stash your streams, zero strings attached",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.8f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                } else {
+                    // Expanded: original Column layout — icon+title row, then subtitle below
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.Top
+                    ) {
+                        Row(
+                            modifier = Modifier.height(48.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                painter = painterResource(id = com.waigi.dock.R.drawable.ic_logo),
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp),
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Dock",
+                                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                                color = Color.White,
+                            )
+                        }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = "Stash your streams, zero strings attached",
