@@ -404,6 +404,7 @@ fun HistoryScreen(
                         url = toDownload.url,
                         title = toDownload.title,
                         thumbnail = thumb,
+                        uploader = toDownload.uploader,
                     )
                     Toast.makeText(context, "Download started", Toast.LENGTH_SHORT).show()
                 }

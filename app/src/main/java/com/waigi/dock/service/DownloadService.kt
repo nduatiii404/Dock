@@ -51,6 +51,7 @@ class DownloadService : Service() {
         const val EXTRA_TASK_ID   = "extra_task_id"
         const val EXTRA_TITLE     = "extra_title"
         const val EXTRA_THUMBNAIL = "extra_thumbnail"
+        const val EXTRA_UPLOADER  = "extra_uploader"
         const val EXTRA_IS_AUDIO  = "extra_is_audio"
         const val EXTRA_VIDEO_QUALITY = "extra_video_quality"
         const val EXTRA_WRITE_SUBTITLE = "extra_write_subtitle"
@@ -66,6 +67,7 @@ class DownloadService : Service() {
             taskId: String? = null,
             title: String? = null,
             thumbnail: String? = null,
+            uploader: String? = null,
         ) {
             val intent = Intent(context, DownloadService::class.java).apply {
                 action = ACTION_DOWNLOAD
@@ -73,6 +75,7 @@ class DownloadService : Service() {
                 if (taskId != null) putExtra(EXTRA_TASK_ID, taskId)
                 if (title != null) putExtra(EXTRA_TITLE, title)
                 if (thumbnail != null) putExtra(EXTRA_THUMBNAIL, thumbnail)
+                if (uploader != null) putExtra(EXTRA_UPLOADER, uploader)
                 putExtra(EXTRA_IS_AUDIO, preferences.extractAudio)
                 putExtra(EXTRA_VIDEO_QUALITY, preferences.videoQuality)
                 putExtra(EXTRA_WRITE_SUBTITLE, preferences.writeSubtitle)
@@ -162,8 +165,9 @@ class DownloadService : Service() {
                 val taskId = intent.getStringExtra(EXTRA_TASK_ID)
                 val title = intent.getStringExtra(EXTRA_TITLE)
                 val thumbnail = intent.getStringExtra(EXTRA_THUMBNAIL)
+                val uploader = intent.getStringExtra(EXTRA_UPLOADER)
                 Log.d(TAG, "Starting download: $url (taskId: $taskId, title: $title)")
-                Downloader.enqueue(url, prefs, taskId, title, thumbnail)
+                Downloader.enqueue(url, prefs, taskId, title, thumbnail, uploader)
             }
             ACTION_PAUSE -> {
                 val taskId = intent.getStringExtra(EXTRA_TASK_ID) ?: return START_NOT_STICKY

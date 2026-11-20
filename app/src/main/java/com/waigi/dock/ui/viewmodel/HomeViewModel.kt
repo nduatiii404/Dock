@@ -179,7 +179,14 @@ class HomeViewModel : ViewModel() {
                         extractAudio = state.selectedAudio,
                         videoQuality = state.selectedQuality,
                     )
-                    DownloadService.startDownload(context, entryUrl, prefs)
+                    DownloadService.startDownload(
+                        context = context,
+                        url = entryUrl,
+                        preferences = prefs,
+                        title = entry.title.ifEmpty { null },
+                        thumbnail = entry.thumbnail,
+                        uploader = entry.uploader,
+                    )
                 }
             }
         }
@@ -261,7 +268,7 @@ class HomeViewModel : ViewModel() {
 
     fun startDownload(context: Context, customPrefs: DownloadPreferences? = null) {
         val state = _uiState.value
-        val url = state.url.trim()
+        val url = state.url.trim().ifEmpty { state.videoInfo?.webpage_url ?: "" }
         if (url.isBlank()) return
 
         val prefs = customPrefs ?: DownloadPreferences.createFromPreferences().copy(
@@ -273,7 +280,28 @@ class HomeViewModel : ViewModel() {
         )
 
         val taskId = java.util.UUID.randomUUID().toString()
-        DownloadService.startDownload(context, url, prefs, taskId = taskId)
+        val currentInfo = state.videoInfo
+
+        // Pre-enqueue synchronously into Downloader so activeTask is immediately available
+        Downloader.enqueue(
+            url = url,
+            preferences = prefs,
+            taskId = taskId,
+            title = currentInfo?.title?.ifEmpty { null },
+            thumbnail = currentInfo?.thumbnail,
+            uploader = currentInfo?.uploader,
+        )
+
+        // Start background service with metadata
+        DownloadService.startDownload(
+            context = context,
+            url = url,
+            preferences = prefs,
+            taskId = taskId,
+            title = currentInfo?.title?.ifEmpty { null },
+            thumbnail = currentInfo?.thumbnail,
+            uploader = currentInfo?.uploader,
+        )
 
         _uiState.update {
             it.copy(
@@ -282,7 +310,7 @@ class HomeViewModel : ViewModel() {
                 currentTaskId = taskId,
                 isBannerDismissed = false,
                 url = "",
-                videoInfo = null,
+                videoInfo = currentInfo, // Retain videoInfo so the banner never flickers or drops the thumbnail
                 lastFetchedUrl = null,
             )
         }

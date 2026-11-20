@@ -67,13 +67,32 @@ object Downloader : KoinComponent {
         taskId: String? = null,
         title: String? = null,
         thumbnail: String? = null,
+        uploader: String? = null,
     ): String {
         val id = taskId ?: java.util.UUID.randomUUID().toString()
+        val existing = _tasks.value[id]
+        if (existing != null) {
+            // Task already enqueued; update any missing metadata if provided
+            if ((existing.title.isEmpty() && !title.isNullOrBlank()) ||
+                (existing.thumbnail == null && thumbnail != null) ||
+                (existing.uploader == null && uploader != null)
+            ) {
+                updateTask(id) {
+                    it.copy(
+                        title = if (it.title.isEmpty() && !title.isNullOrBlank()) title else it.title,
+                        thumbnail = it.thumbnail ?: thumbnail,
+                        uploader = it.uploader ?: uploader,
+                    )
+                }
+            }
+            return id
+        }
         val task = DownloadTask(
             id = id,
             url = url,
             title = title ?: "",
             thumbnail = thumbnail,
+            uploader = uploader,
             isAudio = preferences.extractAudio
         )
         taskPreferences[task.id] = preferences
@@ -175,7 +194,19 @@ object Downloader : KoinComponent {
         val nextTask = _tasks.value.values.firstOrNull { it.state == TaskState.Queued } ?: return
         val prefs = taskPreferences[nextTask.id] ?: DownloadPreferences.createFromPreferences()
 
-        updateTask(nextTask.id) { it.copy(state = TaskState.FetchingInfo) }
+        if (nextTask.title.isEmpty()) {
+            updateTask(nextTask.id) { it.copy(state = TaskState.FetchingInfo) }
+        } else {
+            updateTask(nextTask.id) {
+                it.copy(
+                    state = TaskState.Downloading(
+                        progress = nextTask.progress,
+                        speedText = "Starting…",
+                        etaSeconds = -1
+                    )
+                )
+            }
+        }
         startTask(nextTask, prefs)
     }
 
